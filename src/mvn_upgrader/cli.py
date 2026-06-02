@@ -95,30 +95,42 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     # Imported lazily so `--help` works without heavy deps loaded.
     from . import orchestrator
+    from . import runlog
 
     try:
         cfg = load_config(args.config)
         if getattr(args, "repo", None):
             cfg = cfg.with_overrides(repo_path=args.repo)
 
-        if args.command == "plan":
-            return orchestrator.cmd_plan(cfg)
-        if args.command == "report":
-            return orchestrator.cmd_report(cfg)
-        if args.command == "run":
-            on_failure = args.on_failure or cfg.run.on_failure
-            baseline = args.baseline or cfg.run.baseline
-            cfg = cfg.with_overrides(run=cfg.run.__class__(
-                on_failure=on_failure, report_dir=cfg.run.report_dir,
-                baseline=baseline,
-            ))
-            return orchestrator.cmd_run(
-                cfg,
-                apply=args.apply,
-                create_mr=args.create_mr,
-                only=_split_csv(args.only),
-                max_items=args.max,
-            )
+        use_runlog = args.command in ("plan", "run")
+        if use_runlog:
+            log_path = runlog.activate(cfg)
+            print(f"Run log: {log_path}")
+            print(f"  follow in another terminal: tail -f {log_path}\n")
+
+        try:
+            if args.command == "plan":
+                return orchestrator.cmd_plan(cfg)
+            if args.command == "report":
+                return orchestrator.cmd_report(cfg)
+            if args.command == "run":
+                on_failure = args.on_failure or cfg.run.on_failure
+                baseline = args.baseline or cfg.run.baseline
+                cfg = cfg.with_overrides(run=cfg.run.__class__(
+                    on_failure=on_failure, report_dir=cfg.run.report_dir,
+                    baseline=baseline,
+                    log_file=cfg.run.log_file,
+                ))
+                return orchestrator.cmd_run(
+                    cfg,
+                    apply=args.apply,
+                    create_mr=args.create_mr,
+                    only=_split_csv(args.only),
+                    max_items=args.max,
+                )
+        finally:
+            if use_runlog:
+                runlog.deactivate()
     except ConfigError as exc:
         print(f"config error: {exc}", file=sys.stderr)
         return 2

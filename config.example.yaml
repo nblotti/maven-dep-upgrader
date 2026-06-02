@@ -46,3 +46,4 @@ run:
   on_failure: skip       # skip | abort
   report_dir: .
   baseline: ask          # ask | fix-codex | skip-failing | abort | off
+  # log_file: .mvn-upgrade-work/run.log   # tail -f this path during plan/run

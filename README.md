@@ -65,6 +65,16 @@ mvn-upgrade report --config config.yaml
 
 Without `--apply`, `run` behaves exactly like `plan` (safety).
 
+## Follow-along run log
+
+Every `plan` and `run` writes a line-buffered log under the target repo (default
+`.mvn-upgrade-work/run.log`). The tool prints the path at startup — follow it
+from another terminal:
+
+```bash
+tail -f /path/to/your/maven-project/.mvn-upgrade-work/run.log
+```
+
 ## How it decides what to upgrade
 
 - **Discovery (`pom.py`)** runs `mvn help:effective-pom` to get resolved

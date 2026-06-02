@@ -101,6 +101,8 @@ class RunConfig:
     #   abort        - stop if baseline is red (fix manually)
     #   off          - do not run a baseline build
     baseline: str = "ask"
+    # Follow-along run log (relative to repo_path). Default: .mvn-upgrade-work/run.log
+    log_file: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.on_failure not in ("skip", "abort"):
