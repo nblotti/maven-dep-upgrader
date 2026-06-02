@@ -27,7 +27,7 @@ policy:
   one_at_a_time: false # if true, refuse property bumps that move >1 dependency
 
 git:
-  base_branch: main
+  base_branch: main   # must exist locally or as origin/<name> (e.g. develop)
   branch_prefix: chore/dependency-upgrades
   remote: origin
 

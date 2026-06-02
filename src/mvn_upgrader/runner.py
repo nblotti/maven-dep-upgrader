@@ -300,7 +300,7 @@ def run_upgrades(
         if resume_branch:
             git.checkout(branch)
         else:
-            git.create_branch(branch, cfg.git.base_branch)
+            git.create_branch(branch, cfg.git.base_branch, remote=cfg.git.remote)
     except GitError as exc:
         print(f"could not switch to branch: {exc}")
         return 1

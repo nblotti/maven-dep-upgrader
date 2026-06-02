@@ -10,7 +10,7 @@ def _init_repo(path: Path) -> Git:
     def run(args, **kw):
         return subprocess.run(args, cwd=path, capture_output=True, text=True)
 
-    run(["git", "init", "-q"])
+    run(["git", "init", "-q", "-b", "main"])
     run(["git", "config", "user.email", "t@example.com"])
     run(["git", "config", "user.name", "Test"])
     (path / "pom.xml").write_text("<project><version>1.0</version></project>")
@@ -50,6 +50,21 @@ def test_create_branch(tmp_path):
     g = _init_repo(tmp_path)
     g.create_branch("chore/dependency-upgrades/2026-06-02")
     assert g.current_branch() == "chore/dependency-upgrades/2026-06-02"
+
+
+def test_resolve_base_ref_local(tmp_path):
+    g = _init_repo(tmp_path)
+    assert g.resolve_base_ref("main") == "main"
+
+
+def test_resolve_base_ref_missing_gives_hint(tmp_path):
+    g = _init_repo(tmp_path)
+    # repo init uses -b main, so rename to simulate develop-only repo
+    subprocess.run(["git", "branch", "-m", "develop"], cwd=tmp_path, check=True)
+    with pytest.raises(GitError) as exc:
+        g.resolve_base_ref("main")
+    assert "git.base_branch" in str(exc.value)
+    assert "develop" in str(exc.value)
 
 
 def test_commit_nothing_returns_none(tmp_path):

@@ -49,6 +49,31 @@ class Git:
             "rev-parse", "--verify", "--quiet", f"refs/heads/{name}"
         ).ok
 
+    def remote_branch_exists(self, remote: str, name: str) -> bool:
+        return self._git(
+            "rev-parse", "--verify", "--quiet", f"refs/remotes/{remote}/{name}"
+        ).ok
+
+    def resolve_base_ref(self, base: str, remote: str = "origin") -> str:
+        """Return a git ref suitable for ``checkout -B`` from ``base``.
+
+        Tries local branch, then ``remote/base``. Raises ``GitError`` with a
+        helpful hint when the configured base branch does not exist.
+        """
+        if self.branch_exists(base):
+            return base
+        remote_ref = f"{remote}/{base}"
+        if self.remote_branch_exists(remote, base):
+            return remote_ref
+        cur = self.current_branch()
+        hint = (
+            f"configured git.base_branch {base!r} not found "
+            f"(no local branch and no {remote_ref})."
+        )
+        if cur:
+            hint += f" This repo is on {cur!r} — set git.base_branch: {cur} in your config."
+        raise GitError(hint)
+
     def checkout(self, name: str) -> None:
         res = self._git("checkout", name)
         if not res.ok:
@@ -66,9 +91,12 @@ class Git:
         return bool(self._git("status", "--porcelain").stdout.strip())
 
     # ---- mutations ----------------------------------------------------------
-    def create_branch(self, name: str, base: Optional[str] = None) -> None:
+    def create_branch(
+        self, name: str, base: Optional[str] = None, remote: str = "origin"
+    ) -> None:
         if base:
-            res = self._git("checkout", "-B", name, base)
+            ref = self.resolve_base_ref(base, remote=remote)
+            res = self._git("checkout", "-B", name, ref)
         else:
             res = self._git("checkout", "-B", name)
         if not res.ok:
