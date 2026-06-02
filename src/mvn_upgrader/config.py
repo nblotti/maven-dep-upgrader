@@ -87,18 +87,19 @@ class CodexConfig:
     bypass_sandbox: bool = False  # use --dangerously-bypass-approvals-and-sandbox
 
 
-_BASELINE_CHOICES = ("ask", "fix", "skip-failing", "off")
+_BASELINE_CHOICES = ("ask", "abort", "fix-codex", "skip-failing", "off")
 
 
 @dataclass
 class RunConfig:
     on_failure: str = "skip"  # skip | abort
     report_dir: str = "."
-    # How to handle the pre-upgrade baseline build:
-    #   ask          - run baseline; if tests fail, prompt to fix-first or skip
-    #   fix          - run baseline; if tests fail, abort so they can be fixed
-    #   skip-failing - run baseline; exclude pre-existing failing tests, proceed
-    #   off          - do not run a baseline build (legacy behavior)
+    # Pre-upgrade baseline build handling:
+    #   ask          - prompt: Codex fix / skip failing tests / abort
+    #   fix-codex    - use Codex to fix any pre-existing build failure, then upgrade
+    #   skip-failing - exclude pre-existing failing tests; compile errors → fix-codex
+    #   abort        - stop if baseline is red (fix manually)
+    #   off          - do not run a baseline build
     baseline: str = "ask"
 
     def __post_init__(self) -> None:
@@ -107,10 +108,14 @@ class RunConfig:
                 f"run.on_failure must be 'skip' or 'abort', got {self.on_failure!r}"
             )
         if self.baseline not in _BASELINE_CHOICES:
-            raise ConfigError(
-                f"run.baseline must be one of {_BASELINE_CHOICES}, "
-                f"got {self.baseline!r}"
-            )
+            # Legacy: ``fix`` used to mean "abort for manual fix".
+            if self.baseline == "fix":
+                self.baseline = "abort"
+            else:
+                raise ConfigError(
+                    f"run.baseline must be one of {_BASELINE_CHOICES}, "
+                    f"got {self.baseline!r}"
+                )
 
 
 @dataclass

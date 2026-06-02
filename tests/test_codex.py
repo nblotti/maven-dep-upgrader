@@ -1,6 +1,7 @@
 import pytest
 
 from mvn_upgrader.codex import (
+    build_baseline_prompt,
     build_codex_command,
     build_prompt,
     run_fix,
@@ -18,6 +19,13 @@ def _item():
         property_name="guava.version",
     )
     return PlanItem(artifact=art, target_version="32.1.0-jre")
+
+
+def test_baseline_prompt_allows_missing_deps():
+    p = build_baseline_prompt("mvn verify", "package org.joda.time does not exist")
+    assert "BEFORE any dependency upgrades" in p
+    assert "add missing dependencies" in p
+    assert "org.joda.time does not exist" in p
 
 
 def test_prompt_contains_rules_and_versions():

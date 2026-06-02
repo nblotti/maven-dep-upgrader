@@ -48,6 +48,11 @@ def test_bad_on_failure():
 def test_baseline_default_and_valid():
     assert Config().run.baseline == "ask"
     assert from_dict({"run": {"baseline": "skip-failing"}}).run.baseline == "skip-failing"
+    assert from_dict({"run": {"baseline": "fix-codex"}}).run.baseline == "fix-codex"
+
+
+def test_baseline_legacy_fix_alias_maps_to_abort():
+    assert from_dict({"run": {"baseline": "fix"}}).run.baseline == "abort"
 
 
 def test_bad_baseline():

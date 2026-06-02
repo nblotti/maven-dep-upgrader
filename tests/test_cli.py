@@ -32,6 +32,11 @@ def test_parser_baseline_rejects_unknown():
         build_parser().parse_args(["run", "--baseline", "bogus"])
 
 
+def test_parser_baseline_fix_codex():
+    args = build_parser().parse_args(["run", "--apply", "--baseline", "fix-codex"])
+    assert args.baseline == "fix-codex"
+
+
 def test_parser_requires_command():
     with pytest.raises(SystemExit):
         build_parser().parse_args([])

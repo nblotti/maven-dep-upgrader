@@ -74,6 +74,29 @@ _PREEXISTING_NOTE = (
 )
 
 
+BASELINE_PROMPT_TEMPLATE = (
+    "The build is failing BEFORE any dependency upgrades have been applied in "
+    "this Maven project.\n"
+    "Fix the compilation, dependency-resolution, and/or test failures so the "
+    "build succeeds.\n"
+    "Rules:\n"
+    "- You MAY add missing dependencies or plugins to pom.xml when code "
+    "references libraries that are not declared (e.g. missing joda-time).\n"
+    "- Do NOT change versions of dependencies that are already declared — "
+    "version bumps are handled separately by another step.\n"
+    "- Fix tests by correcting production or test code and configuration, NOT "
+    "by @Disabled/@Ignore, deleting tests, or skipping unless unavoidable.\n"
+    "- Keep changes minimal and focused on making the build green.\n"
+    "The build command is `{build_cmd}`.\n"
+    "Build error output:\n"
+    "```\n{log_tail}\n```\n"
+)
+
+
+def build_baseline_prompt(build_cmd: str, log_tail: str) -> str:
+    return BASELINE_PROMPT_TEMPLATE.format(build_cmd=build_cmd, log_tail=log_tail)
+
+
 def build_prompt(
     item: PlanItem,
     build_cmd: str,
@@ -119,6 +142,26 @@ def run_fix(
 
     env = dict(os.environ)
     # OPENAI_API_KEY is read from env by Codex; we pass the environment through.
+    res = runner(cmd, cwd=cfg.repo, env=env, redact=cfg.secret_values())
+    return CodexResult(
+        invoked=True,
+        exit_code=res.returncode,
+        stdout=redact(res.stdout, cfg.secret_values()),
+        stderr=redact(res.stderr, cfg.secret_values()),
+    )
+
+
+def run_baseline_fix(
+    cfg: Config,
+    log_tail: str,
+    *,
+    build_cmd: str,
+    runner=proc.run,
+) -> CodexResult:
+    """Ask Codex to fix pre-existing build failures (before any upgrade)."""
+    prompt = build_baseline_prompt(build_cmd, log_tail)
+    cmd = build_codex_command(cfg, prompt)
+    env = dict(os.environ)
     res = runner(cmd, cwd=cfg.repo, env=env, redact=cfg.secret_values())
     return CodexResult(
         invoked=True,

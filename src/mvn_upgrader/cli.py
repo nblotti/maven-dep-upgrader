@@ -69,12 +69,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_run.add_argument(
         "--baseline",
-        choices=["ask", "fix", "skip-failing", "off"],
+        choices=["ask", "abort", "fix-codex", "skip-failing", "off"],
         default=None,
-        help="pre-upgrade test baseline handling (override run.baseline): "
-             "ask (prompt if tests fail), fix (abort to fix first), "
-             "skip-failing (exclude pre-existing failures and continue), "
-             "off (no baseline build)",
+        help="pre-upgrade baseline handling: ask (prompt), fix-codex (Codex fixes "
+             "red build before upgrades), skip-failing (exclude failing tests), "
+             "abort (stop if red), off",
     )
 
     p_report = sub.add_parser("report", help="regenerate report from last run state")

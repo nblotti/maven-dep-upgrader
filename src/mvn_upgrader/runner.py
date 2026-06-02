@@ -111,6 +111,35 @@ def _setup_run(git: Git, repo: Path, cfg: Config) -> bool:
     return True
 
 
+def _generic_fix_loop(
+    cfg: Config,
+    *,
+    build_fn: Callable,
+    codex_invoke: Callable[[Config, str], None],
+    tag_prefix: str,
+) -> tuple[bool, int, Optional[str]]:
+    """Bounded build → Codex loop. ``codex_invoke(cfg, log_tail)`` runs one fix."""
+    max_attempts = cfg.codex.max_fix_attempts
+    prev_sig: Optional[str] = None
+    fix_attempts = 0
+    last_sig: Optional[str] = None
+    safe_tag = tag_prefix.replace(":", "_").replace("/", "_")
+    for attempt in range(1, max_attempts + 1):
+        res = build_fn(cfg, attempt_tag=f"{safe_tag}-{attempt}")
+        if res.ok:
+            return True, fix_attempts, None
+        last_sig = res.error_signature
+        if attempt == max_attempts:
+            break
+        if res.error_signature is not None and res.error_signature == prev_sig:
+            log.info("no progress (identical error signature); stopping fix loop")
+            break
+        prev_sig = res.error_signature
+        codex_invoke(cfg, res.tail)
+        fix_attempts += 1
+    return False, fix_attempts, last_sig
+
+
 def _fix_loop(
     cfg: Config,
     item: PlanItem,
@@ -118,46 +147,70 @@ def _fix_loop(
     build_fn: Callable,
     codex_fn: Callable,
 ) -> tuple[bool, int, Optional[str]]:
-    """Bounded build/codex loop. Returns (green, fix_attempts, last_signature)."""
-    max_attempts = cfg.codex.max_fix_attempts
-    prev_sig: Optional[str] = None
-    fix_attempts = 0
-    last_sig: Optional[str] = None
-    for attempt in range(1, max_attempts + 1):
-        res = build_fn(cfg, attempt_tag=f"{item.ga.replace(':', '_')}-{attempt}")
-        if res.ok:
-            return True, fix_attempts, None
-        last_sig = res.error_signature
-        if attempt == max_attempts:
-            break
-        if res.error_signature is not None and res.error_signature == prev_sig:
-            log.info("no progress on %s (identical error signature); stopping", item.ga)
-            break
-        prev_sig = res.error_signature
-        codex_fn(cfg, item, res.tail, build_cmd=cfg.maven.build_command)
-        fix_attempts += 1
-    return False, fix_attempts, last_sig
+    """Bounded build/codex loop for a single dependency upgrade."""
+
+    def invoke(c, tail):
+        codex_fn(c, item, tail, build_cmd=c.maven.build_command)
+
+    return _generic_fix_loop(
+        cfg, build_fn=build_fn, codex_invoke=invoke, tag_prefix=item.ga
+    )
 
 
-def _decide_baseline(cfg: Config, failures, prompt_fn: Callable) -> str:
-    """Decide whether to 'fix' (abort) or 'skip' pre-existing failures."""
+def _preexisting_fix_loop(
+    cfg: Config,
+    *,
+    build_fn: Callable,
+    codex_baseline_fn: Callable,
+) -> tuple[bool, int, Optional[str]]:
+    def invoke(c, tail):
+        codex_baseline_fn(c, tail, build_cmd=c.maven.build_command)
+
+    return _generic_fix_loop(
+        cfg, build_fn=build_fn, codex_invoke=invoke, tag_prefix="preexisting"
+    )
+
+
+def _decide_baseline_action(
+    cfg: Config, result: baseline_mod.BaselineResult, prompt_fn: Callable
+) -> str:
+    """Return ``codex``, ``skip`` (tests only), or ``abort``."""
     mode = cfg.run.baseline
-    if mode == "fix":
-        return "fix"
+    if mode == "fix-codex":
+        return "codex"
+    if mode == "abort":
+        return "abort"
     if mode == "skip-failing":
-        return "skip"
-    # mode == "ask": prompt interactively.
+        return "skip" if result.has_failing_tests else "codex"
+
+    # mode == "ask"
+    if not result.has_failing_tests:
+        answer = prompt_fn(
+            "\nPre-existing build failure (compile/resolution, not a test).\n"
+            "Fix with Codex before upgrading? [Y/n/a] "
+        )
+        if answer is None:
+            print("(no interactive input; defaulting to Codex fix)")
+            return "codex"
+        answer = answer.strip().lower()
+        if answer in ("", "y", "yes", "c", "codex"):
+            return "codex"
+        return "abort"
+
+    n = len(result.failures)
     answer = prompt_fn(
-        f"\n{len(failures)} test(s) are already failing before any upgrade.\n"
-        "Fix the failing tests before starting the upgrade? [Y/n] "
+        f"\n{n} pre-existing failing test(s) before any upgrade.\n"
+        "[C] Fix with Codex  [S] Skip failing tests and continue  [A] Abort [C]: "
     )
     if answer is None:
-        print("(no interactive input available; defaulting to fix-first)")
-        return "fix"
+        print("(no interactive input; defaulting to Codex fix)")
+        return "codex"
     answer = answer.strip().lower()
-    if answer in ("", "y", "yes"):
-        return "fix"
-    return "skip"
+    if answer in ("s", "skip"):
+        return "skip"
+    if answer in ("a", "abort", "n", "no"):
+        return "abort"
+    return "codex"
 
 
 def _print_build_diagnostics(build, *, tail_lines: int = 40) -> None:
@@ -174,47 +227,66 @@ def _print_build_diagnostics(build, *, tail_lines: int = 40) -> None:
 
 
 def _baseline_gate(
-    cfg: Config, *, baseline_fn: Callable, prompt_fn: Callable
+    cfg: Config,
+    git: Git,
+    *,
+    baseline_fn: Callable,
+    build_fn: Callable,
+    codex_baseline_fn: Callable,
+    prompt_fn: Callable,
 ) -> Optional[int]:
-    """Run the baseline build and decide how to proceed.
-
-    Returns an exit code to abort the run, or None to continue. On a 'skip'
-    decision it records the pre-existing failing tests as build exclusions.
-    """
+    """Run baseline build; fix, skip tests, or abort on pre-existing failures."""
     if cfg.run.baseline == "off":
         return None
 
-    print("\nrunning baseline build to check current test status...")
+    print("\nrunning baseline build to check current project health...")
     result = baseline_fn(cfg)
     if result.ok:
         print("baseline build is green.")
         return None
 
-    if not result.has_failing_tests:
+    if result.has_failing_tests:
+        failures = result.failures
+        preview = ", ".join(ft.selector for ft in failures[:8])
+        more = "" if len(failures) <= 8 else f" (+{len(failures) - 8} more)"
+        print(f"baseline build is RED: {len(failures)} pre-existing failing test(s): "
+              f"{preview}{more}")
+    else:
         print(
-            "baseline build is RED but no failing tests were detected "
-            "(likely a compilation or dependency-resolution error, not a test "
-            "failure).\nFix the build before running upgrades."
+            "baseline build is RED (compilation, dependency-resolution, or config — "
+            "not a tracked test failure)."
         )
+        _print_build_diagnostics(result.build)
+
+    action = _decide_baseline_action(cfg, result, prompt_fn)
+    if action == "abort":
+        print("aborting — fix the build manually or use --baseline fix-codex.")
+        return 1
+
+    if action == "skip":
+        excludes = baseline_mod.to_test_excludes(result.failures)
+        cfg.maven.test_excludes = list(excludes)
+        print(f"proceeding; excluding {len(excludes)} pre-existing failing test(s) "
+              "from subsequent builds.")
+        return None
+
+    # action == "codex"
+    print("attempting to fix pre-existing build failure(s) with Codex...")
+    checkpoint = git.checkpoint()
+    green, attempts, sig = _preexisting_fix_loop(
+        cfg, build_fn=build_fn, codex_baseline_fn=codex_baseline_fn
+    )
+    if not green:
+        git.restore_to(checkpoint)
+        print(f"pre-existing build still red after {attempts} Codex fix attempt(s).")
+        if sig:
+            print(f"last error signature: {sig}")
         _print_build_diagnostics(result.build)
         return 1
 
-    failures = result.failures
-    preview = ", ".join(ft.selector for ft in failures[:8])
-    more = "" if len(failures) <= 8 else f" (+{len(failures) - 8} more)"
-    print(f"baseline build is RED: {len(failures)} pre-existing failing test(s): "
-          f"{preview}{more}")
-
-    decision = _decide_baseline(cfg, failures, prompt_fn)
-    if decision == "fix":
-        print("aborting so the failing tests can be fixed first.")
-        return 1
-
-    excludes = baseline_mod.to_test_excludes(failures)
-    cfg.maven.test_excludes = list(excludes)
-    print(f"proceeding; excluding {len(excludes)} pre-existing failing test(s) "
-          "from subsequent builds. New failures caused by an upgrade will still "
-          "be fixed (by changing code, not by skipping tests).")
+    sha = git.commit_all("fix: resolve pre-existing build failures")
+    print(f"pre-existing build is green after {attempts} Codex fix attempt(s)"
+          + (f" (commit {sha[:10]})" if sha else "") + ".")
     return None
 
 
@@ -229,6 +301,7 @@ def run_upgrades(
     git_factory: Callable[..., Git] = Git,
     build_fn: Callable = build_mod.run,
     codex_fn: Callable = codex_mod.run_fix,
+    codex_baseline_fn: Callable = codex_mod.run_baseline_fix,
     apply_fn: Callable = apply_mod.apply_item,
     baseline_fn: Callable = baseline_mod.run_baseline,
     prompt_fn: Callable = _default_prompt,
@@ -287,11 +360,6 @@ def run_upgrades(
         print("working tree not clean; aborting.")
         return 1
 
-    # ---- baseline test gate ----------------------------------------------
-    gate_rc = _baseline_gate(cfg, baseline_fn=baseline_fn, prompt_fn=prompt_fn)
-    if gate_rc is not None:
-        return gate_rc
-
     resume_branch = (
         prior is not None and prior.branch == branch
         and bool(resumed_results) and git.branch_exists(branch)
@@ -306,6 +374,18 @@ def run_upgrades(
         return 1
 
     created_agents = _setup_run(git, repo, cfg)
+
+    gate_rc = _baseline_gate(
+        cfg, git,
+        baseline_fn=baseline_fn,
+        build_fn=build_fn,
+        codex_baseline_fn=codex_baseline_fn,
+        prompt_fn=prompt_fn,
+    )
+    if gate_rc is not None:
+        if created_agents:
+            (repo / "AGENTS.md").unlink(missing_ok=True)
+        return gate_rc
 
     results: list[UpgradeResult] = list(carry) + list(resumed_results)
     successes = len(resumed_results)

@@ -82,32 +82,26 @@ Without `--apply`, `run` behaves exactly like `plan` (safety).
   `update-parent`) and falling back to a precise targeted XML edit (used for
   plugins, which have no exact-version goal, and whenever a goal can't apply).
 
-## Baseline test check (before upgrading)
+## Baseline check (before upgrading)
 
-Before any dependency is bumped, `run --apply` runs the configured build once to
-check the **current** test status. Controlled by `run.baseline` (or `--baseline`):
+Before any dependency is bumped, `run --apply` runs the configured build once.
+Controlled by `run.baseline` (or `--baseline`):
 
-- `ask` (default) — if tests already fail, prompt: fix them first, or skip them.
-- `fix` — if tests already fail, abort so you can fix them first.
-- `skip-failing` — exclude the pre-existing failing tests and proceed.
-- `off` — skip the baseline build entirely.
+| Mode | Behavior |
+|------|----------|
+| `ask` (default) | Prompt: **Codex fix** / skip failing tests / abort |
+| `fix-codex` | Use Codex to fix compile/test failures, commit, then upgrade |
+| `skip-failing` | Exclude pre-existing **test** failures; compile errors → Codex fix |
+| `abort` | Stop if baseline is red |
+| `off` | Skip baseline |
 
-When pre-existing failures are skipped, those exact tests are excluded from every
-later build (via `-Dtest=!Class#method`), so the Codex loop only has to fix
-breakages **caused by the upgrade**. Newly failing tests are fixed by changing
-production code — they are never disabled or skipped. The excluded tests are
-listed in the report.
+For compile errors (e.g. `package org.joda.time does not exist`), Codex may add
+missing dependencies to `pom.xml` — it does **not** bump existing versions.
 
 ```bash
-# Non-interactive: skip pre-existing failures and keep going
-mvn-upgrade run --config my-config.yaml --apply --baseline skip-failing
-
-# Non-interactive: stop if the baseline is red
-mvn-upgrade run --config my-config.yaml --apply --baseline fix
+# Non-interactive: always Codex-fix a red baseline, then upgrade
+mvn-upgrade run --config my-config.yaml --apply --baseline fix-codex
 ```
-
-If the baseline is red but **no failing tests** are detected (e.g. a compilation
-error), the run aborts regardless — there is nothing to "skip".
 
 ## The fix loop
 

@@ -260,12 +260,12 @@ def test_baseline_green_proceeds(tmp_path):
     assert cfg.maven.test_excludes == []
 
 
-def test_baseline_red_fix_first_aborts(tmp_path):
+def test_baseline_red_abort_stops(tmp_path):
     _init_repo(tmp_path)
     pom = tmp_path / "pom.xml"
     original = pom.read_text()
     cfg = _cfg(tmp_path)
-    cfg.run.baseline = "fix"
+    cfg.run.baseline = "abort"
 
     rc = run_upgrades(
         cfg, plan_override=([_item()], []),
@@ -276,11 +276,7 @@ def test_baseline_red_fix_first_aborts(tmp_path):
         skip_preflight=True,
     )
     assert rc == 1
-    # nothing changed, no upgrade branch commit
     assert pom.read_text() == original
-    log = subprocess.run(["git", "log", "--oneline"], cwd=tmp_path,
-                         capture_output=True, text=True).stdout
-    assert "build(deps)" not in log
 
 
 def test_baseline_red_skip_failing_excludes_and_proceeds(tmp_path):
@@ -323,14 +319,14 @@ def test_baseline_ask_prompt_no_skips(tmp_path):
         codex_fn=lambda *a, **k: None,
         apply_fn=_edit_pom_apply(pom),
         baseline_fn=_red_baseline([FailingTest("com.x.FooTest", "bar")]),
-        prompt_fn=lambda msg: "n",  # don't fix first -> skip
+        prompt_fn=lambda msg: "s",  # skip failing tests
         skip_preflight=True,
     )
     assert rc == 0
     assert cfg.maven.test_excludes == ["FooTest#bar"]
 
 
-def test_baseline_ask_prompt_yes_aborts(tmp_path):
+def test_baseline_ask_prompt_abort(tmp_path):
     _init_repo(tmp_path)
     pom = tmp_path / "pom.xml"
     cfg = _cfg(tmp_path)
@@ -342,30 +338,71 @@ def test_baseline_ask_prompt_yes_aborts(tmp_path):
         codex_fn=lambda *a, **k: None,
         apply_fn=_edit_pom_apply(pom),
         baseline_fn=_red_baseline([FailingTest("com.x.FooTest", "bar")]),
-        prompt_fn=lambda msg: "y",  # fix first -> abort
+        prompt_fn=lambda msg: "a",
         skip_preflight=True,
     )
     assert rc == 1
 
 
-def test_baseline_red_no_failing_tests_aborts(tmp_path):
+def test_baseline_fix_codex_compile_error(tmp_path):
     _init_repo(tmp_path)
     pom = tmp_path / "pom.xml"
     cfg = _cfg(tmp_path)
-    cfg.run.baseline = "skip-failing"
+    cfg.run.baseline = "fix-codex"
+    cfg.codex.max_fix_attempts = 2
 
     def compile_error_baseline(cfg):
-        return BaselineResult(ok=False, failures=[],
-                              build=BuildResult(False, 1, None, "compile error", "s"))
+        return BaselineResult(
+            ok=False, failures=[],
+            build=BuildResult(False, 1, None, "package org.joda.time does not exist", "s"),
+        )
+
+    builds = _build_seq([
+        BuildResult(False, 1, None, "compile error", "s1"),  # preexisting attempt 1
+        BuildResult(True, 0, None, "", None),                 # preexisting attempt 2 green
+        BuildResult(True, 0, None, "", None),                 # upgrade item build
+    ])
+
+    def codex_fix(cfg, tail, *, build_cmd):
+        pom.write_text(pom.read_text() + "<!-- fixed joda -->\n")
 
     rc = run_upgrades(
         cfg, plan_override=([_item()], []),
-        build_fn=_build_seq([]),
+        build_fn=builds,
         codex_fn=lambda *a, **k: None,
+        codex_baseline_fn=codex_fix,
         apply_fn=_edit_pom_apply(pom),
         baseline_fn=compile_error_baseline,
         skip_preflight=True,
     )
+    assert rc == 0
+    log = subprocess.run(["git", "log", "--oneline"], cwd=tmp_path,
+                         capture_output=True, text=True).stdout
+    assert "fix: resolve pre-existing build failures" in log
+    assert "build(deps): bump" in log
+
+
+def test_baseline_red_no_failing_tests_skip_failing_uses_codex(tmp_path):
+    _init_repo(tmp_path)
+    pom = tmp_path / "pom.xml"
+    cfg = _cfg(tmp_path)
+    cfg.run.baseline = "skip-failing"
+    cfg.codex.max_fix_attempts = 1
+
+    def compile_error_baseline(cfg):
+        return BaselineResult(ok=False, failures=[],
+                              build=BuildResult(False, 1, None, "compile", "s"))
+
+    rc = run_upgrades(
+        cfg, plan_override=([_item()], []),
+        build_fn=_build_seq([BuildResult(False, 1, None, "b", "s1")]),
+        codex_fn=lambda *a, **k: None,
+        codex_baseline_fn=lambda *a, **k: None,
+        apply_fn=_edit_pom_apply(pom),
+        baseline_fn=compile_error_baseline,
+        skip_preflight=True,
+    )
+    # codex couldn't fix in 1 attempt -> abort
     assert rc == 1
 
 
