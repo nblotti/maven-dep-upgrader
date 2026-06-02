@@ -69,11 +69,29 @@ def test_fix_loop_no_progress_guard():
     def codex_fn(cfg, item, tail, *, build_cmd):
         calls["n"] += 1
 
-    green, attempts, sig = _fix_loop(cfg, _item(), build_fn=builds, codex_fn=codex_fn)
+    green, attempts, sig, _ = _fix_loop(cfg, _item(), build_fn=builds, codex_fn=codex_fn)
     assert green is False
     # build1 red -> codex(1) -> build2 same sig -> stop. Only one codex call.
     assert calls["n"] == 1
     assert attempts == 1
+
+
+def test_fix_loop_no_progress_disabled_runs_all_attempts():
+    cfg = Config()
+    cfg.codex.max_fix_attempts = 4
+    cfg.codex.stop_on_no_progress = False
+    same = BuildResult(False, 1, None, "tail", "sig-identical")
+    builds = _build_seq([same, same, same, same])
+    calls = {"n": 0}
+
+    def codex_fn(cfg, item, tail, *, build_cmd):
+        calls["n"] += 1
+
+    green, attempts, sig, _ = _fix_loop(cfg, _item(), build_fn=builds, codex_fn=codex_fn)
+    assert green is False
+    # 4 builds, codex after each of the first 3 (no early stop on identical sig).
+    assert calls["n"] == 3
+    assert attempts == 3
 
 
 def test_green_first_try_commits(tmp_path):

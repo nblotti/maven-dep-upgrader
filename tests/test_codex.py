@@ -4,6 +4,7 @@ from mvn_upgrader.codex import (
     build_baseline_prompt,
     build_codex_command,
     build_prompt,
+    codex_env,
     run_fix,
 )
 from mvn_upgrader.config import Config
@@ -101,3 +102,12 @@ def test_run_fix_passes_env_and_redacts(monkeypatch):
     assert res.invoked and res.exit_code == 0
     assert captured["env"]["OPENAI_API_KEY"] == "sk-secrettoken1234567890abcd"
     assert "glpat-secrettoken1234567890abc" not in res.stdout
+
+
+def test_codex_env_merges_extra_env(monkeypatch):
+    monkeypatch.setenv("LITELLM_HOST", "http://proxy:4000/v1")
+    cfg = Config()
+    cfg.codex.extra_env = {"OPENAI_API_BASE": "$LITELLM_HOST"}
+
+    env = codex_env(cfg)
+    assert env["OPENAI_API_BASE"] == "http://proxy:4000/v1"

@@ -34,8 +34,22 @@ they come from environment variables only:
 | Variable | Used for |
 |---|---|
 | `NEXUS_USER`, `NEXUS_PASSWORD` | Nexus REST search auth |
-| `OPENAI_API_KEY` | Codex CLI |
+| `OPENAI_API_KEY` (optional — see `codex.api_key_envs`) | Only if Codex reads the key from env |
 | `GITLAB_TOKEN` (`GITLAB_HOST` for self-managed) | GitLab MR |
+
+For **LiteLLM** or a custom Codex wrapper, you usually need nothing in config — Codex
+inherits your shell environment and its own config. Optional overrides:
+
+```yaml
+codex:
+  api_key_envs: [YOUR_LITELLM_KEY]   # only used for preflight when require_api_key: true
+  extra_env:
+    OPENAI_API_BASE: http://your-litellm-host:4000/v1
+```
+
+Preflight does **not** require an API key by default (`codex.require_api_key: false`).
+The tool never calls the LLM itself; it only runs `codex exec`, which uses whatever
+auth Codex already has.
 
 Maven server credentials live in `settings.xml`. Point `maven.settings` at a
 `settings.xml` containing a `mirrorOf=*` mirror to your Nexus so the build and

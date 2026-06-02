@@ -77,8 +77,13 @@ _PREEXISTING_NOTE = (
 BASELINE_PROMPT_TEMPLATE = (
     "The build is failing BEFORE any dependency upgrades have been applied in "
     "this Maven project.\n"
-    "Fix the compilation, dependency-resolution, and/or test failures so the "
-    "build succeeds.\n"
+    "Your job is to make the build GREEN. The build command is `{build_cmd}`.\n"
+    "Work iteratively until it passes:\n"
+    "1. Apply a fix.\n"
+    "2. Run `{build_cmd}` yourself to verify.\n"
+    "3. If it still fails, read the new error and fix again.\n"
+    "Repeat until `{build_cmd}` exits 0. Do NOT stop or report success until you "
+    "have actually run the build and seen it pass — verify, don't assume.\n"
     "Rules:\n"
     "- You MAY add missing dependencies or plugins to pom.xml when code "
     "references libraries that are not declared (e.g. missing joda-time).\n"
@@ -87,8 +92,7 @@ BASELINE_PROMPT_TEMPLATE = (
     "- Fix tests by correcting production or test code and configuration, NOT "
     "by @Disabled/@Ignore, deleting tests, or skipping unless unavoidable.\n"
     "- Keep changes minimal and focused on making the build green.\n"
-    "The build command is `{build_cmd}`.\n"
-    "Build error output:\n"
+    "Initial build error output:\n"
     "```\n{log_tail}\n```\n"
 )
 
@@ -127,6 +131,14 @@ def build_codex_command(cfg: Config, prompt: str) -> list[str]:
     return cmd
 
 
+def codex_env(cfg: Config) -> dict[str, str]:
+    """Environment passed to the Codex subprocess (inherits shell + ``extra_env``)."""
+    env = dict(os.environ)
+    for key, value in cfg.codex.extra_env.items():
+        env[key] = os.path.expandvars(value)
+    return env
+
+
 def run_fix(
     cfg: Config,
     item: PlanItem,
@@ -140,9 +152,7 @@ def run_fix(
     prompt = build_prompt(item, build_cmd, log_tail, preexisting_failures=preexisting)
     cmd = build_codex_command(cfg, prompt)
 
-    env = dict(os.environ)
-    # OPENAI_API_KEY is read from env by Codex; we pass the environment through.
-    res = runner(cmd, cwd=cfg.repo, env=env, redact=cfg.secret_values())
+    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg), redact=cfg.secret_values())
     return CodexResult(
         invoked=True,
         exit_code=res.returncode,
@@ -161,8 +171,7 @@ def run_baseline_fix(
     """Ask Codex to fix pre-existing build failures (before any upgrade)."""
     prompt = build_baseline_prompt(build_cmd, log_tail)
     cmd = build_codex_command(cfg, prompt)
-    env = dict(os.environ)
-    res = runner(cmd, cwd=cfg.repo, env=env, redact=cfg.secret_values())
+    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg), redact=cfg.secret_values())
     return CodexResult(
         invoked=True,
         exit_code=res.returncode,

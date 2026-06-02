@@ -39,8 +39,15 @@ gitlab:
 codex:
   executable: codex
   sandbox: workspace-write
-  max_fix_attempts: 4
+  max_fix_attempts: 4    # how many build->Codex->build cycles to try
   bypass_sandbox: false  # set true only in a hardened/isolated CI container
+  # stop_on_no_progress: false  # keep retrying even if the same error persists
+  # Env var(s) checked for an API key (first non-empty wins). For LiteLLM or a
+  # custom Codex wrapper, set your key var name here instead of OPENAI_API_KEY.
+  # api_key_envs: [MY_LITELLM_KEY, OPENAI_API_KEY]
+  # require_api_key: true  # only if you want preflight to fail when api_key_envs unset
+  # extra_env:               # merged into the Codex subprocess environment
+  #   OPENAI_API_BASE: http://localhost:4000/v1
 
 run:
   on_failure: skip       # skip | abort

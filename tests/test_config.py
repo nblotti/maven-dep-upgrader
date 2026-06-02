@@ -67,10 +67,20 @@ def test_maven_test_excludes_default_empty():
 def test_secrets_from_env(monkeypatch):
     monkeypatch.setenv("NEXUS_PASSWORD", "hunter2")
     monkeypatch.setenv("GITLAB_TOKEN", "glpat-xxx")
+    monkeypatch.setenv("LITELLM_KEY", "sk-litellm")
     cfg = Config()
+    cfg.codex.api_key_envs = ["LITELLM_KEY", "OPENAI_API_KEY"]
     assert cfg.nexus_password == "hunter2"
     assert cfg.gitlab_token == "glpat-xxx"
+    assert cfg.codex_api_key == "sk-litellm"
+    assert cfg.codex_api_key_env == "LITELLM_KEY"
     assert "hunter2" in cfg.secret_values()
+    assert "sk-litellm" in cfg.secret_values()
+
+
+def test_codex_api_key_envs_from_yaml():
+    cfg = from_dict({"codex": {"api_key_envs": ["FOO", "BAR"]}})
+    assert cfg.codex.api_key_envs == ["FOO", "BAR"]
 
 
 def test_load_config_missing_file():

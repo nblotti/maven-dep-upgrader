@@ -117,27 +117,38 @@ def _generic_fix_loop(
     build_fn: Callable,
     codex_invoke: Callable[[Config, str], None],
     tag_prefix: str,
-) -> tuple[bool, int, Optional[str]]:
+) -> tuple[bool, int, Optional[str], Optional[build_mod.BuildResult]]:
     """Bounded build → Codex loop. ``codex_invoke(cfg, log_tail)`` runs one fix."""
     max_attempts = cfg.codex.max_fix_attempts
     prev_sig: Optional[str] = None
     fix_attempts = 0
     last_sig: Optional[str] = None
+    last_build: Optional[build_mod.BuildResult] = None
     safe_tag = tag_prefix.replace(":", "_").replace("/", "_")
     for attempt in range(1, max_attempts + 1):
+        print(f"  build attempt {attempt}/{max_attempts}...")
         res = build_fn(cfg, attempt_tag=f"{safe_tag}-{attempt}")
+        last_build = res
         if res.ok:
-            return True, fix_attempts, None
+            return True, fix_attempts, None, res
         last_sig = res.error_signature
         if attempt == max_attempts:
             break
-        if res.error_signature is not None and res.error_signature == prev_sig:
-            log.info("no progress (identical error signature); stopping fix loop")
+        if (
+            cfg.codex.stop_on_no_progress
+            and res.error_signature is not None
+            and res.error_signature == prev_sig
+        ):
+            print(
+                "  no progress (same error as last attempt); stopping Codex loop. "
+                "Set codex.stop_on_no_progress=false to keep retrying."
+            )
             break
         prev_sig = res.error_signature
+        print(f"  invoking Codex fix (attempt {fix_attempts + 1}/{max_attempts})...")
         codex_invoke(cfg, res.tail)
         fix_attempts += 1
-    return False, fix_attempts, last_sig
+    return False, fix_attempts, last_sig, last_build
 
 
 def _fix_loop(
@@ -164,7 +175,16 @@ def _preexisting_fix_loop(
     codex_baseline_fn: Callable,
 ) -> tuple[bool, int, Optional[str]]:
     def invoke(c, tail):
-        codex_baseline_fn(c, tail, build_cmd=c.maven.build_command)
+        r = codex_baseline_fn(c, tail, build_cmd=c.maven.build_command)
+        if r is None:
+            return
+        print(f"  Codex exited with code {r.exit_code}")
+        if r.stdout.strip():
+            snippet = r.stdout.strip().splitlines()[-1][:200]
+            print(f"  Codex: {snippet}")
+        if r.exit_code != 0 and r.stderr.strip():
+            err = r.stderr.strip().splitlines()[-1][:300]
+            print(f"  Codex error: {err}")
 
     return _generic_fix_loop(
         cfg, build_fn=build_fn, codex_invoke=invoke, tag_prefix="preexisting"
@@ -273,7 +293,7 @@ def _baseline_gate(
     # action == "codex"
     print("attempting to fix pre-existing build failure(s) with Codex...")
     checkpoint = git.checkpoint()
-    green, attempts, sig = _preexisting_fix_loop(
+    green, attempts, sig, last_build = _preexisting_fix_loop(
         cfg, build_fn=build_fn, codex_baseline_fn=codex_baseline_fn
     )
     if not green:
@@ -281,7 +301,7 @@ def _baseline_gate(
         print(f"pre-existing build still red after {attempts} Codex fix attempt(s).")
         if sig:
             print(f"last error signature: {sig}")
-        _print_build_diagnostics(result.build)
+        _print_build_diagnostics(last_build or result.build)
         return 1
 
     sha = git.commit_all("fix: resolve pre-existing build failures")
@@ -446,7 +466,7 @@ def _process_item(cfg, git: Git, item: PlanItem, *, build_fn, codex_fn, apply_fn
         return _result_from_item(item, Status.ERROR,
                                  notes=[f"apply touched non-POM files: {nonpom}"])
 
-    green, fix_attempts, sig = _fix_loop(cfg, item, build_fn=build_fn, codex_fn=codex_fn)
+    green, fix_attempts, sig, _ = _fix_loop(cfg, item, build_fn=build_fn, codex_fn=codex_fn)
     if green:
         sha = git.commit_all(_commit_message(item))
         notes = []

@@ -119,12 +119,29 @@ def run_preflight(
             proc.which(cfg.codex.executable) is not None,
             cfg.codex.executable,
         )
-        report.add(
-            "OPENAI_API_KEY set",
-            bool(cfg.openai_api_key),
-            "env",
-            fatal=False,
+        key_ok = bool(cfg.codex_api_key)
+        # Codex fix is required for fix-codex / ask / skip-failing (compile path).
+        need_key = (
+            cfg.codex.require_api_key
+            and need_mutation
+            and cfg.run.baseline in ("fix-codex", "ask", "skip-failing")
         )
+        env_label = ", ".join(cfg.codex.api_key_envs)
+        key_detail = cfg.codex_api_key_env or "env"
+        if not cfg.codex.require_api_key:
+            report.add(
+                "codex API key check",
+                True,
+                "skipped (codex.require_api_key=false)",
+                fatal=False,
+            )
+        else:
+            report.add(
+                f"API key ({env_label}) set",
+                key_ok,
+                key_detail,
+                fatal=need_key,
+            )
 
     if need_mr:
         report.add("glab present", proc.which("glab") is not None, fatal=False)

@@ -85,6 +85,19 @@ class CodexConfig:
     sandbox: str = "workspace-write"
     max_fix_attempts: int = 4
     bypass_sandbox: bool = False  # use --dangerously-bypass-approvals-and-sandbox
+    # When True, stop early if a Codex attempt leaves the build with the exact
+    # same error (likely stuck). When False, keep trying the full
+    # ``max_fix_attempts`` even if the error is unchanged.
+    stop_on_no_progress: bool = True
+    # Env var name(s) checked for an API key (first non-empty wins). Override when
+    # Codex uses LiteLLM or another backend with a non-OpenAI env var name.
+    api_key_envs: list[str] = field(default_factory=lambda: ["OPENAI_API_KEY"])
+    # Set true only if you want preflight to abort when none of ``api_key_envs`` is set.
+    # Codex reads credentials from the shell env and/or ~/.codex/ config; the tool never
+    # calls the LLM API directly.
+    require_api_key: bool = False
+    # Extra env vars merged into the Codex subprocess (values support $VAR expansion).
+    extra_env: dict[str, str] = field(default_factory=dict)
 
 
 _BASELINE_CHOICES = ("ask", "abort", "fix-codex", "skip-failing", "off")
@@ -152,8 +165,25 @@ class Config:
         return self.gitlab.host or os.environ.get("GITLAB_HOST")
 
     @property
+    def codex_api_key(self) -> Optional[str]:
+        for name in self.codex.api_key_envs:
+            value = os.environ.get(name)
+            if value:
+                return value
+        return None
+
+    @property
+    def codex_api_key_env(self) -> Optional[str]:
+        """Name of the first env var that supplied ``codex_api_key``."""
+        for name in self.codex.api_key_envs:
+            if os.environ.get(name):
+                return name
+        return None
+
+    @property
     def openai_api_key(self) -> Optional[str]:
-        return os.environ.get("OPENAI_API_KEY")
+        """Backward-compatible alias; prefer ``codex_api_key``."""
+        return self.codex_api_key
 
     def secret_values(self) -> list[str]:
         """All secret-shaped values to redact from captured logs."""
@@ -161,7 +191,7 @@ class Config:
             self.nexus_password,
             self.nexus_user,
             self.gitlab_token,
-            self.openai_api_key,
+            self.codex_api_key,
         ]
         return [v for v in vals if v]
 
