@@ -160,6 +160,19 @@ def _decide_baseline(cfg: Config, failures, prompt_fn: Callable) -> str:
     return "skip"
 
 
+def _print_build_diagnostics(build, *, tail_lines: int = 40) -> None:
+    """Surface where the baseline log is and show its tail to aid debugging."""
+    if build is None:
+        return
+    if build.log_path:
+        print(f"baseline build log: {build.log_path}")
+    if build.tail:
+        tail = "\n".join(build.tail.splitlines()[-tail_lines:])
+        print("---- last lines of baseline build ----")
+        print(tail)
+        print("---------------------------------------")
+
+
 def _baseline_gate(
     cfg: Config, *, baseline_fn: Callable, prompt_fn: Callable
 ) -> Optional[int]:
@@ -180,9 +193,10 @@ def _baseline_gate(
     if not result.has_failing_tests:
         print(
             "baseline build is RED but no failing tests were detected "
-            "(likely a compilation or configuration error, not a test failure).\n"
-            "Fix the build before running upgrades."
+            "(likely a compilation or dependency-resolution error, not a test "
+            "failure).\nFix the build before running upgrades."
         )
+        _print_build_diagnostics(result.build)
         return 1
 
     failures = result.failures

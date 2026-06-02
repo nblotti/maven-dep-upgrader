@@ -5,6 +5,8 @@ import pytest
 from mvn_upgrader.baseline import (
     BaselineResult,
     FailingTest,
+    collect_failures,
+    parse_failures_from_log,
     parse_failures_from_xml,
     parse_surefire_failures,
     run_baseline,
@@ -37,6 +39,30 @@ PARAM_XML = """<?xml version="1.0"?>
 </testsuite>
 """
 
+# Surefire 3.x style report with XML namespace on the root element.
+NAMESPACED_XML = """<?xml version="1.0" encoding="UTF-8"?>
+<testsuite xmlns="https://maven.apache.org/surefire/maven-surefire-plugin/xsd/surefire-test-report.xsd"
+           name="com.azqore.qoreservice.rbac.QoreserviceRbacUserRolesPermissionsExtractionServiceApplicationTests"
+           tests="1" errors="1" failures="0">
+  <testcase name="contextLoads"
+            classname="com.azqore.qoreservice.rbac.QoreserviceRbacUserRolesPermissionsExtractionServiceApplicationTests"
+            time="0.5">
+    <error message="Failed to load ApplicationContext" type="java.lang.IllegalStateException"/>
+  </testcase>
+</testsuite>
+"""
+
+LOG_SNIPPET = """
+[ERROR] Tests run: 1, Failures: 0, Errors: 1, Skipped: 0
+[ERROR] Failed to execute goal ... maven-surefire-plugin:3.2.5:test ...
+[ERROR]
+[ERROR] Please refer to .../target/surefire-reports
+[ERROR]
+[ERROR] See ... for the individual test results.
+[ERROR] QoreserviceRbacUserRolesPermissionsExtractionServiceApplicationTests.contextLoads » IllegalState Failed to load ApplicationContext
+[INFO] BUILD FAILURE
+"""
+
 
 def test_parse_failures_basic():
     fails = parse_failures_from_xml(SUREFIRE_XML)
@@ -51,6 +77,31 @@ def test_parse_strips_parametrized_suffix():
     sels = {f.selector for f in fails}
     # both parametrizations collapse to the same method selector
     assert sels == {"ParamTest#paramCase"}
+
+
+def test_parse_namespaced_surefire_xml():
+    fails = parse_failures_from_xml(NAMESPACED_XML)
+    assert len(fails) == 1
+    assert fails[0].selector == (
+        "QoreserviceRbacUserRolesPermissionsExtractionServiceApplicationTests#contextLoads"
+    )
+
+
+def test_parse_failures_from_log():
+    fails = parse_failures_from_log(LOG_SNIPPET)
+    assert len(fails) == 1
+    assert fails[0].selector == (
+        "QoreserviceRbacUserRolesPermissionsExtractionServiceApplicationTests#contextLoads"
+    )
+
+
+def test_collect_failures_falls_back_to_log(tmp_path):
+    log = tmp_path / "baseline.log"
+    log.write_text(LOG_SNIPPET)
+    build = BuildResult(False, 1, str(log), LOG_SNIPPET, "sig")
+    fails = collect_failures(tmp_path, build)
+    assert len(fails) == 1
+    assert "contextLoads" in fails[0].selector
 
 
 def test_parse_bad_xml_returns_empty():
@@ -99,7 +150,7 @@ def test_run_baseline_red_parses(tmp_path):
     def build_fn(cfg, *, attempt_tag, runner=None):
         return BuildResult(False, 1, None, "tail", "sig")
 
-    def parse_fn(repo):
+    def parse_fn(repo, build):
         return [FailingTest("com.example.FooTest", "bar")]
 
     res = run_baseline(cfg, build_fn=build_fn, parse_fn=parse_fn)
