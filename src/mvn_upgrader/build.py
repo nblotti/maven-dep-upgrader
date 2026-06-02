@@ -112,9 +112,9 @@ def workdir(cfg: Config) -> Path:
     return d
 
 
-def run(cfg: Config, *, attempt_tag: str = "build", runner=proc.run) -> BuildResult:
+def run(cfg: Config, *, attempt_tag: str = "build", runner=proc.run_streaming) -> BuildResult:
     cmd = build_command(cfg)
-    res = runner(cmd, cwd=cfg.repo)
+    res = runner(cmd, cwd=cfg.repo, redact=cfg.secret_values(), prefix="  [mvn] ")
     combined = redact(res.combined, cfg.secret_values())
 
     wd = workdir(cfg)

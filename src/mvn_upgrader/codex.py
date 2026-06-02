@@ -154,14 +154,15 @@ def run_fix(
     log_tail: str,
     *,
     build_cmd: str,
-    runner=proc.run,
+    runner=proc.run_streaming,
 ) -> CodexResult:
     """Ask Codex to fix the breakage. Returns its exit code/output (not trusted)."""
     preexisting = getattr(cfg.maven, "test_excludes", None) or None
     prompt = build_prompt(item, build_cmd, log_tail, preexisting_failures=preexisting)
     cmd = build_codex_command(cfg, prompt)
 
-    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg), redact=cfg.secret_values())
+    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg),
+                 redact=cfg.secret_values(), prefix="  [codex] ")
     return CodexResult(
         invoked=True,
         exit_code=res.returncode,
@@ -175,12 +176,13 @@ def run_baseline_fix(
     log_tail: str,
     *,
     build_cmd: str,
-    runner=proc.run,
+    runner=proc.run_streaming,
 ) -> CodexResult:
     """Ask Codex to fix pre-existing build failures (before any upgrade)."""
     prompt = build_baseline_prompt(build_cmd, log_tail)
     cmd = build_codex_command(cfg, prompt)
-    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg), redact=cfg.secret_values())
+    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg),
+                 redact=cfg.secret_values(), prefix="  [codex] ")
     return CodexResult(
         invoked=True,
         exit_code=res.returncode,
