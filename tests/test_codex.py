@@ -71,7 +71,8 @@ def test_codex_command_default_sandbox():
     cmd = build_codex_command(cfg, "PROMPT")
     assert cmd[:4] == ["codex", "exec", "--cd", str(cfg.repo)]
     assert "--sandbox" in cmd and "workspace-write" in cmd
-    assert "--ask-for-approval" in cmd and "never" in cmd
+    # `codex exec` does not accept --ask-for-approval; it must not be sent.
+    assert "--ask-for-approval" not in cmd
     assert cmd[-1] == "PROMPT"
 
 

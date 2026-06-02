@@ -133,7 +133,9 @@ def build_codex_command(cfg: Config, prompt: str) -> list[str]:
     if cfg.codex.bypass_sandbox:
         cmd += ["--dangerously-bypass-approvals-and-sandbox"]
     else:
-        cmd += ["--sandbox", cfg.codex.sandbox, "--ask-for-approval", "never"]
+        # `codex exec` is non-interactive and never prompts for approval, so it
+        # rejects --ask-for-approval; only the sandbox policy is relevant here.
+        cmd += ["--sandbox", cfg.codex.sandbox]
     cmd += [prompt]
     return cmd
 
