@@ -82,6 +82,33 @@ Without `--apply`, `run` behaves exactly like `plan` (safety).
   `update-parent`) and falling back to a precise targeted XML edit (used for
   plugins, which have no exact-version goal, and whenever a goal can't apply).
 
+## Baseline test check (before upgrading)
+
+Before any dependency is bumped, `run --apply` runs the configured build once to
+check the **current** test status. Controlled by `run.baseline` (or `--baseline`):
+
+- `ask` (default) — if tests already fail, prompt: fix them first, or skip them.
+- `fix` — if tests already fail, abort so you can fix them first.
+- `skip-failing` — exclude the pre-existing failing tests and proceed.
+- `off` — skip the baseline build entirely.
+
+When pre-existing failures are skipped, those exact tests are excluded from every
+later build (via `-Dtest=!Class#method`), so the Codex loop only has to fix
+breakages **caused by the upgrade**. Newly failing tests are fixed by changing
+production code — they are never disabled or skipped. The excluded tests are
+listed in the report.
+
+```bash
+# Non-interactive: skip pre-existing failures and keep going
+mvn-upgrade run --config my-config.yaml --apply --baseline skip-failing
+
+# Non-interactive: stop if the baseline is red
+mvn-upgrade run --config my-config.yaml --apply --baseline fix
+```
+
+If the baseline is red but **no failing tests** are detected (e.g. a compilation
+error), the run aborts regardless — there is nothing to "skip".
+
 ## The fix loop
 
 The orchestrator owns the loop and **always re-runs Maven** to judge success —

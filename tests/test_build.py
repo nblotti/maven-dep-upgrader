@@ -65,6 +65,31 @@ def test_build_command_default_when_empty():
     assert "clean" in cmd and "verify" in cmd
 
 
+def test_build_command_injects_test_excludes():
+    cfg = Config()
+    cfg.maven.test_excludes = ["FooTest#bar", "BazTest"]
+    cmd = build_command(cfg)
+    assert "-Dtest=!FooTest#bar,!BazTest" in cmd
+    assert "-Dit.test=!FooTest#bar,!BazTest" in cmd
+    assert "-Dsurefire.failIfNoSpecifiedTests=false" in cmd
+    assert "-Dfailsafe.failIfNoSpecifiedTests=false" in cmd
+
+
+def test_build_command_does_not_clobber_existing_dtest():
+    cfg = Config()
+    cfg.maven.build_command = "mvn -B verify -Dtest=OnlyThis"
+    cfg.maven.test_excludes = ["FooTest#bar"]
+    cmd = build_command(cfg)
+    # user's explicit -Dtest is preserved; no injected exclusion
+    assert "-Dtest=OnlyThis" in cmd
+    assert not any(c.startswith("-Dtest=!") for c in cmd)
+
+
+def test_build_command_no_excludes_by_default():
+    cmd = build_command(Config())
+    assert not any(c.startswith("-Dtest=") for c in cmd)
+
+
 def test_run_writes_log_and_tail(tmp_path):
     cfg = Config(repo_path=str(tmp_path))
 

@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from mvn_upgrader.apply import ApplyResult
+from mvn_upgrader.baseline import BaselineResult, FailingTest
 from mvn_upgrader.build import BuildResult
 from mvn_upgrader.config import Config
 from mvn_upgrader.git_ops import Git
@@ -50,6 +51,8 @@ def _build_seq(results):
 def _cfg(repo: Path, **over):
     cfg = Config(repo_path=str(repo))
     cfg.codex.max_fix_attempts = 3
+    # Legacy tests don't exercise the baseline build; keep it off by default.
+    cfg.run.baseline = "off"
     for k, v in over.items():
         setattr(cfg.run, k, v) if hasattr(cfg.run, k) else None
     return cfg
@@ -223,6 +226,147 @@ def test_resume_skips_already_upgraded(tmp_path):
     log2 = subprocess.run(["git", "log", "--oneline"], cwd=tmp_path,
                           capture_output=True, text=True).stdout.strip().splitlines()
     assert len(log2) == len(log1)  # no new commits
+
+
+def _green_baseline(cfg):
+    return BaselineResult(ok=True, failures=[],
+                          build=BuildResult(True, 0, None, "", None))
+
+
+def _red_baseline(failures):
+    def fn(cfg):
+        return BaselineResult(
+            ok=False, failures=failures,
+            build=BuildResult(False, 1, None, "tail", "sig"),
+        )
+    return fn
+
+
+def test_baseline_green_proceeds(tmp_path):
+    _init_repo(tmp_path)
+    pom = tmp_path / "pom.xml"
+    cfg = _cfg(tmp_path)
+    cfg.run.baseline = "ask"  # but baseline is green, so no prompt
+
+    rc = run_upgrades(
+        cfg, plan_override=([_item()], []),
+        build_fn=_build_seq([BuildResult(True, 0, None, "", None)]),
+        codex_fn=lambda *a, **k: None,
+        apply_fn=_edit_pom_apply(pom),
+        baseline_fn=_green_baseline,
+        skip_preflight=True,
+    )
+    assert rc == 0
+    assert cfg.maven.test_excludes == []
+
+
+def test_baseline_red_fix_first_aborts(tmp_path):
+    _init_repo(tmp_path)
+    pom = tmp_path / "pom.xml"
+    original = pom.read_text()
+    cfg = _cfg(tmp_path)
+    cfg.run.baseline = "fix"
+
+    rc = run_upgrades(
+        cfg, plan_override=([_item()], []),
+        build_fn=_build_seq([]),
+        codex_fn=lambda *a, **k: None,
+        apply_fn=_edit_pom_apply(pom),
+        baseline_fn=_red_baseline([FailingTest("com.x.FooTest", "bar")]),
+        skip_preflight=True,
+    )
+    assert rc == 1
+    # nothing changed, no upgrade branch commit
+    assert pom.read_text() == original
+    log = subprocess.run(["git", "log", "--oneline"], cwd=tmp_path,
+                         capture_output=True, text=True).stdout
+    assert "build(deps)" not in log
+
+
+def test_baseline_red_skip_failing_excludes_and_proceeds(tmp_path):
+    _init_repo(tmp_path)
+    pom = tmp_path / "pom.xml"
+    cfg = _cfg(tmp_path)
+    cfg.run.baseline = "skip-failing"
+
+    rc = run_upgrades(
+        cfg, plan_override=([_item()], []),
+        build_fn=_build_seq([BuildResult(True, 0, None, "", None)]),
+        codex_fn=lambda *a, **k: None,
+        apply_fn=_edit_pom_apply(pom),
+        baseline_fn=_red_baseline([
+            FailingTest("com.x.FooTest", "bar"),
+            FailingTest("com.y.BazTest", None),
+        ]),
+        skip_preflight=True,
+    )
+    assert rc == 0
+    assert cfg.maven.test_excludes == ["BazTest", "FooTest#bar"]
+
+    import json
+    state = json.loads((tmp_path / "dependency-updates.json").read_text())
+    assert state["baseline_excluded_tests"] == ["BazTest", "FooTest#bar"]
+    log = subprocess.run(["git", "log", "--oneline"], cwd=tmp_path,
+                         capture_output=True, text=True).stdout
+    assert "build(deps): bump com.example:lib" in log
+
+
+def test_baseline_ask_prompt_no_skips(tmp_path):
+    _init_repo(tmp_path)
+    pom = tmp_path / "pom.xml"
+    cfg = _cfg(tmp_path)
+    cfg.run.baseline = "ask"
+
+    rc = run_upgrades(
+        cfg, plan_override=([_item()], []),
+        build_fn=_build_seq([BuildResult(True, 0, None, "", None)]),
+        codex_fn=lambda *a, **k: None,
+        apply_fn=_edit_pom_apply(pom),
+        baseline_fn=_red_baseline([FailingTest("com.x.FooTest", "bar")]),
+        prompt_fn=lambda msg: "n",  # don't fix first -> skip
+        skip_preflight=True,
+    )
+    assert rc == 0
+    assert cfg.maven.test_excludes == ["FooTest#bar"]
+
+
+def test_baseline_ask_prompt_yes_aborts(tmp_path):
+    _init_repo(tmp_path)
+    pom = tmp_path / "pom.xml"
+    cfg = _cfg(tmp_path)
+    cfg.run.baseline = "ask"
+
+    rc = run_upgrades(
+        cfg, plan_override=([_item()], []),
+        build_fn=_build_seq([]),
+        codex_fn=lambda *a, **k: None,
+        apply_fn=_edit_pom_apply(pom),
+        baseline_fn=_red_baseline([FailingTest("com.x.FooTest", "bar")]),
+        prompt_fn=lambda msg: "y",  # fix first -> abort
+        skip_preflight=True,
+    )
+    assert rc == 1
+
+
+def test_baseline_red_no_failing_tests_aborts(tmp_path):
+    _init_repo(tmp_path)
+    pom = tmp_path / "pom.xml"
+    cfg = _cfg(tmp_path)
+    cfg.run.baseline = "skip-failing"
+
+    def compile_error_baseline(cfg):
+        return BaselineResult(ok=False, failures=[],
+                              build=BuildResult(False, 1, None, "compile error", "s"))
+
+    rc = run_upgrades(
+        cfg, plan_override=([_item()], []),
+        build_fn=_build_seq([]),
+        codex_fn=lambda *a, **k: None,
+        apply_fn=_edit_pom_apply(pom),
+        baseline_fn=compile_error_baseline,
+        skip_preflight=True,
+    )
+    assert rc == 1
 
 
 def test_abort_on_failure_stops(tmp_path):

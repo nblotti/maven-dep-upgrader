@@ -53,6 +53,9 @@ When asked to fix a failing build:
 - Do NOT change any dependency or plugin versions.
 - Do NOT modify unrelated modules.
 - Do NOT weaken or delete tests to make them pass unless the test calls a changed API.
+- Some tests may have been ALREADY failing before the upgrade and are excluded
+  from the build; do not touch them. Never disable, skip, or delete a NEWLY
+  failing test to make the build pass -- fix the production code instead.
 - Keep changes minimal and focused.
 """
 
@@ -61,15 +64,34 @@ def agents_md_content(cfg: Config) -> str:
     return AGENTS_MD.format(build_cmd=cfg.maven.build_command)
 
 
-def build_prompt(item: PlanItem, build_cmd: str, log_tail: str) -> str:
+_PREEXISTING_NOTE = (
+    "\nThese tests were ALREADY failing before this upgrade and are excluded "
+    "from the build; they are NOT your concern, do not touch them:\n"
+    "{listing}\n"
+    "Fix ONLY the code/tests newly broken by this dependency change, and fix "
+    "them by changing production code. Do NOT disable, skip, @Disabled/@Ignore, "
+    "delete, or otherwise weaken any newly failing test to make the build pass.\n"
+)
+
+
+def build_prompt(
+    item: PlanItem,
+    build_cmd: str,
+    log_tail: str,
+    preexisting_failures: Optional[list[str]] = None,
+) -> str:
     a = item.artifact
-    return PROMPT_TEMPLATE.format(
+    prompt = PROMPT_TEMPLATE.format(
         ga=a.ga,
         old=a.current_version or "?",
         new=item.target_version,
         build_cmd=build_cmd,
         log_tail=log_tail,
     )
+    if preexisting_failures:
+        listing = "\n".join(f"- {s}" for s in preexisting_failures)
+        prompt += _PREEXISTING_NOTE.format(listing=listing)
+    return prompt
 
 
 def build_codex_command(cfg: Config, prompt: str) -> list[str]:
@@ -91,7 +113,8 @@ def run_fix(
     runner=proc.run,
 ) -> CodexResult:
     """Ask Codex to fix the breakage. Returns its exit code/output (not trusted)."""
-    prompt = build_prompt(item, build_cmd, log_tail)
+    preexisting = getattr(cfg.maven, "test_excludes", None) or None
+    prompt = build_prompt(item, build_cmd, log_tail, preexisting_failures=preexisting)
     cmd = build_codex_command(cfg, prompt)
 
     env = dict(os.environ)

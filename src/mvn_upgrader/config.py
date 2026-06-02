@@ -30,6 +30,10 @@ class MavenConfig:
     settings: Optional[str] = None
     build_command: str = "mvn -B -ntp clean verify"
     mvn_executable: str = "mvn"
+    # Surefire/failsafe test selectors to exclude from builds. Normally set at
+    # runtime (pre-existing failing tests discovered by the baseline check), but
+    # may be seeded from config too.
+    test_excludes: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.settings = _expand(self.settings)
@@ -83,15 +87,29 @@ class CodexConfig:
     bypass_sandbox: bool = False  # use --dangerously-bypass-approvals-and-sandbox
 
 
+_BASELINE_CHOICES = ("ask", "fix", "skip-failing", "off")
+
+
 @dataclass
 class RunConfig:
     on_failure: str = "skip"  # skip | abort
     report_dir: str = "."
+    # How to handle the pre-upgrade baseline build:
+    #   ask          - run baseline; if tests fail, prompt to fix-first or skip
+    #   fix          - run baseline; if tests fail, abort so they can be fixed
+    #   skip-failing - run baseline; exclude pre-existing failing tests, proceed
+    #   off          - do not run a baseline build (legacy behavior)
+    baseline: str = "ask"
 
     def __post_init__(self) -> None:
         if self.on_failure not in ("skip", "abort"):
             raise ConfigError(
                 f"run.on_failure must be 'skip' or 'abort', got {self.on_failure!r}"
+            )
+        if self.baseline not in _BASELINE_CHOICES:
+            raise ConfigError(
+                f"run.baseline must be one of {_BASELINE_CHOICES}, "
+                f"got {self.baseline!r}"
             )
 
 

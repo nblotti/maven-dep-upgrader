@@ -43,6 +43,8 @@ class RunState:
     mr_url: Optional[str] = None
     used_fallback: bool = False
     results: list[UpgradeResult] = field(default_factory=list)
+    # Tests that were already failing before any upgrade and were excluded.
+    baseline_excluded_tests: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return {
@@ -52,6 +54,7 @@ class RunState:
             "base_branch": self.base_branch,
             "mr_url": self.mr_url,
             "used_fallback": self.used_fallback,
+            "baseline_excluded_tests": list(self.baseline_excluded_tests),
             "results": [r.to_dict() for r in self.results],
         }
 
@@ -64,6 +67,7 @@ class RunState:
             base_branch=d.get("base_branch"),
             mr_url=d.get("mr_url"),
             used_fallback=d.get("used_fallback", False),
+            baseline_excluded_tests=list(d.get("baseline_excluded_tests", [])),
             results=[UpgradeResult.from_dict(r) for r in d.get("results", [])],
         )
 
@@ -108,6 +112,12 @@ def render_markdown(state: RunState) -> str:
         lines.append(
             "- Note: effective versions derived from raw POMs "
             "(Maven effective-pom unavailable)."
+        )
+    if state.baseline_excluded_tests:
+        lines.append(
+            f"- Pre-existing failing tests excluded from builds: "
+            f"{len(state.baseline_excluded_tests)} "
+            f"({', '.join(state.baseline_excluded_tests)})"
         )
     for status in _STATUS_ORDER:
         n = counts.get(status.value, 0)

@@ -8,10 +8,12 @@ skipped-build-failed; on ``on_failure: abort`` the run stops there.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import Callable, Optional
 
 from . import apply as apply_mod
+from . import baseline as baseline_mod
 from . import build as build_mod
 from . import codex as codex_mod
 from .config import Config
@@ -24,6 +26,16 @@ from .preflight import run_preflight
 from .report import RunState, load_state, now_iso, today, write_reports
 
 log = logging.getLogger("mvn_upgrader.runner")
+
+
+def _default_prompt(message: str) -> Optional[str]:
+    """Read a line from the user; return None when no interactive TTY is available."""
+    if not sys.stdin or not sys.stdin.isatty():
+        return None
+    try:
+        return input(message)
+    except EOFError:
+        return None
 
 
 def _commit_message(item: PlanItem) -> str:
@@ -127,6 +139,71 @@ def _fix_loop(
     return False, fix_attempts, last_sig
 
 
+def _decide_baseline(cfg: Config, failures, prompt_fn: Callable) -> str:
+    """Decide whether to 'fix' (abort) or 'skip' pre-existing failures."""
+    mode = cfg.run.baseline
+    if mode == "fix":
+        return "fix"
+    if mode == "skip-failing":
+        return "skip"
+    # mode == "ask": prompt interactively.
+    answer = prompt_fn(
+        f"\n{len(failures)} test(s) are already failing before any upgrade.\n"
+        "Fix the failing tests before starting the upgrade? [Y/n] "
+    )
+    if answer is None:
+        print("(no interactive input available; defaulting to fix-first)")
+        return "fix"
+    answer = answer.strip().lower()
+    if answer in ("", "y", "yes"):
+        return "fix"
+    return "skip"
+
+
+def _baseline_gate(
+    cfg: Config, *, baseline_fn: Callable, prompt_fn: Callable
+) -> Optional[int]:
+    """Run the baseline build and decide how to proceed.
+
+    Returns an exit code to abort the run, or None to continue. On a 'skip'
+    decision it records the pre-existing failing tests as build exclusions.
+    """
+    if cfg.run.baseline == "off":
+        return None
+
+    print("\nrunning baseline build to check current test status...")
+    result = baseline_fn(cfg)
+    if result.ok:
+        print("baseline build is green.")
+        return None
+
+    if not result.has_failing_tests:
+        print(
+            "baseline build is RED but no failing tests were detected "
+            "(likely a compilation or configuration error, not a test failure).\n"
+            "Fix the build before running upgrades."
+        )
+        return 1
+
+    failures = result.failures
+    preview = ", ".join(ft.selector for ft in failures[:8])
+    more = "" if len(failures) <= 8 else f" (+{len(failures) - 8} more)"
+    print(f"baseline build is RED: {len(failures)} pre-existing failing test(s): "
+          f"{preview}{more}")
+
+    decision = _decide_baseline(cfg, failures, prompt_fn)
+    if decision == "fix":
+        print("aborting so the failing tests can be fixed first.")
+        return 1
+
+    excludes = baseline_mod.to_test_excludes(failures)
+    cfg.maven.test_excludes = list(excludes)
+    print(f"proceeding; excluding {len(excludes)} pre-existing failing test(s) "
+          "from subsequent builds. New failures caused by an upgrade will still "
+          "be fixed (by changing code, not by skipping tests).")
+    return None
+
+
 def run_upgrades(
     cfg: Config,
     *,
@@ -139,6 +216,8 @@ def run_upgrades(
     build_fn: Callable = build_mod.run,
     codex_fn: Callable = codex_mod.run_fix,
     apply_fn: Callable = apply_mod.apply_item,
+    baseline_fn: Callable = baseline_mod.run_baseline,
+    prompt_fn: Callable = _default_prompt,
     skip_preflight: bool = False,
 ) -> int:
     only = only or []
@@ -193,6 +272,11 @@ def run_upgrades(
     if not git.is_clean():
         print("working tree not clean; aborting.")
         return 1
+
+    # ---- baseline test gate ----------------------------------------------
+    gate_rc = _baseline_gate(cfg, baseline_fn=baseline_fn, prompt_fn=prompt_fn)
+    if gate_rc is not None:
+        return gate_rc
 
     resume_branch = (
         prior is not None and prior.branch == branch
@@ -312,6 +396,7 @@ def _write(cfg, results, *, mode, base_branch, branch=None, used_fallback=False)
     state = RunState(
         generated_at=now_iso(), mode=mode, branch=branch,
         base_branch=base_branch, used_fallback=used_fallback, results=results,
+        baseline_excluded_tests=list(getattr(cfg.maven, "test_excludes", []) or []),
     )
     write_reports(cfg, state)
     return state

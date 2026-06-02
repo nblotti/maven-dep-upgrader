@@ -19,6 +19,19 @@ def test_parser_run_flags():
     assert _split_csv(args.only) == ["g:a", "h:b"]
 
 
+def test_parser_baseline_flag():
+    args = build_parser().parse_args(["run", "--apply", "--baseline", "skip-failing"])
+    assert args.baseline == "skip-failing"
+    # default is None (falls back to config)
+    args2 = build_parser().parse_args(["run", "--apply"])
+    assert args2.baseline is None
+
+
+def test_parser_baseline_rejects_unknown():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["run", "--baseline", "bogus"])
+
+
 def test_parser_requires_command():
     with pytest.raises(SystemExit):
         build_parser().parse_args([])

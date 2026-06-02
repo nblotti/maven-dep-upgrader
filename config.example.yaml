@@ -45,3 +45,9 @@ codex:
 run:
   on_failure: skip       # skip | abort
   report_dir: .
+  # Pre-upgrade baseline build (runs the test suite before touching anything):
+  #   ask          - run baseline; if tests already fail, prompt: fix first or skip them
+  #   fix          - run baseline; if tests already fail, abort so you can fix them
+  #   skip-failing - run baseline; exclude pre-existing failing tests and proceed
+  #   off          - do not run a baseline build
+  baseline: ask

@@ -79,7 +79,31 @@ def build_command(cfg: Config) -> list[str]:
     # Ensure the Nexus-mirror settings.xml is used by the build too.
     if cfg.maven.settings and "-s" not in parts and "--settings" not in parts:
         parts = [parts[0], "-s", cfg.maven.settings, *parts[1:]]
+    parts += _test_exclude_args(cfg, parts)
     return parts
+
+
+def _test_exclude_args(cfg: Config, parts: list[str]) -> list[str]:
+    """Build ``-Dtest=!...`` args to skip pre-existing failing tests.
+
+    Skipped when the user's build_command already pins ``-Dtest`` (we must not
+    clobber an explicit selection).
+    """
+    excludes = getattr(cfg.maven, "test_excludes", None) or []
+    if not excludes:
+        return []
+    if any(p == "-Dtest" or p.startswith("-Dtest=") for p in parts):
+        log.warning(
+            "build_command already sets -Dtest; not injecting baseline exclusions"
+        )
+        return []
+    negated = ",".join(f"!{sel}" for sel in excludes)
+    return [
+        f"-Dtest={negated}",
+        f"-Dit.test={negated}",
+        "-Dsurefire.failIfNoSpecifiedTests=false",
+        "-Dfailsafe.failIfNoSpecifiedTests=false",
+    ]
 
 
 def workdir(cfg: Config) -> Path:

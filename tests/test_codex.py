@@ -28,6 +28,35 @@ def test_prompt_contains_rules_and_versions():
     assert "boom" in p
 
 
+def test_prompt_without_preexisting_has_no_note():
+    p = build_prompt(_item(), "mvn verify", "log")
+    assert "ALREADY failing" not in p
+
+
+def test_prompt_with_preexisting_failures_note():
+    p = build_prompt(_item(), "mvn verify", "log",
+                     preexisting_failures=["FooTest#bar", "BazTest"])
+    assert "ALREADY failing" in p
+    assert "FooTest#bar" in p and "BazTest" in p
+    assert "Do NOT disable, skip" in p
+
+
+def test_run_fix_includes_preexisting_from_cfg(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+    cfg = Config()
+    cfg.maven.test_excludes = ["FooTest#bar"]
+
+    captured = {}
+
+    def fake_runner(args, **kw):
+        captured["prompt"] = args[-1]
+        return ProcResult(args=list(args), returncode=0, stdout="", stderr="")
+
+    run_fix(cfg, _item(), "log", build_cmd="mvn verify", runner=fake_runner)
+    assert "FooTest#bar" in captured["prompt"]
+    assert "ALREADY failing" in captured["prompt"]
+
+
 def test_codex_command_default_sandbox():
     cfg = Config()
     cmd = build_codex_command(cfg, "PROMPT")

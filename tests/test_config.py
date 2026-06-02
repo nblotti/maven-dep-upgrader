@@ -45,6 +45,20 @@ def test_bad_on_failure():
         from_dict({"run": {"on_failure": "explode"}})
 
 
+def test_baseline_default_and_valid():
+    assert Config().run.baseline == "ask"
+    assert from_dict({"run": {"baseline": "skip-failing"}}).run.baseline == "skip-failing"
+
+
+def test_bad_baseline():
+    with pytest.raises(ConfigError):
+        from_dict({"run": {"baseline": "nope"}})
+
+
+def test_maven_test_excludes_default_empty():
+    assert Config().maven.test_excludes == []
+
+
 def test_secrets_from_env(monkeypatch):
     monkeypatch.setenv("NEXUS_PASSWORD", "hunter2")
     monkeypatch.setenv("GITLAB_TOKEN", "glpat-xxx")

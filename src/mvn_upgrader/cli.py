@@ -67,6 +67,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override run.on_failure",
     )
+    p_run.add_argument(
+        "--baseline",
+        choices=["ask", "fix", "skip-failing", "off"],
+        default=None,
+        help="pre-upgrade test baseline handling (override run.baseline): "
+             "ask (prompt if tests fail), fix (abort to fix first), "
+             "skip-failing (exclude pre-existing failures and continue), "
+             "off (no baseline build)",
+    )
 
     p_report = sub.add_parser("report", help="regenerate report from last run state")
     add_common(p_report)
@@ -99,8 +108,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return orchestrator.cmd_report(cfg)
         if args.command == "run":
             on_failure = args.on_failure or cfg.run.on_failure
+            baseline = args.baseline or cfg.run.baseline
             cfg = cfg.with_overrides(run=cfg.run.__class__(
-                on_failure=on_failure, report_dir=cfg.run.report_dir
+                on_failure=on_failure, report_dir=cfg.run.report_dir,
+                baseline=baseline,
             ))
             return orchestrator.cmd_run(
                 cfg,
