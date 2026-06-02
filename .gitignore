@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.mvn-upgrade-work/
+dependency-updates.md
+dependency-updates.json
+*.log

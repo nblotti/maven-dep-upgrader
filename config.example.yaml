@@ -1,0 +1,47 @@
+# maven-dep-upgrader configuration.
+# Secrets are NEVER put here. They come from environment variables:
+#   NEXUS_USER, NEXUS_PASSWORD, OPENAI_API_KEY, GITLAB_TOKEN (and GITLAB_HOST).
+# Maven server credentials live in settings.xml.
+
+repo_path: .
+
+maven:
+  # settings.xml that contains the Nexus mirror (mirrorOf=*) + server creds.
+  settings: ~/.m2/settings.xml
+  build_command: "mvn -B -ntp clean verify"
+  mvn_executable: mvn
+
+nexus:
+  # TODO: replace with your Nexus base URL and repository name(s) to search.
+  base_url: https://nexus.example.com
+  repositories: [maven-public]   # search order; first match wins
+  extension: jar
+
+policy:
+  allow_major: false
+  exclude_prerelease: true
+  include: []          # globs on "groupId:artifactId"; empty = all
+  exclude: []
+  ignore_versions: []  # list of regexes; matching versions are dropped
+  pin: {}              # "g:a": "1.2.3" forces a specific target
+  one_at_a_time: false # if true, refuse property bumps that move >1 dependency
+
+git:
+  base_branch: main
+  branch_prefix: chore/dependency-upgrades
+  remote: origin
+
+gitlab:
+  # TODO: replace with your GitLab project path.
+  project: group/subgroup/repo
+  # host: gitlab.self-managed.example.com   # optional, for self-managed
+
+codex:
+  executable: codex
+  sandbox: workspace-write
+  max_fix_attempts: 4
+  bypass_sandbox: false  # set true only in a hardened/isolated CI container
+
+run:
+  on_failure: skip       # skip | abort
+  report_dir: .
