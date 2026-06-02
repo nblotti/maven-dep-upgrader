@@ -42,6 +42,10 @@ codex:
   max_fix_attempts: 4    # how many build->Codex->build cycles to try
   bypass_sandbox: false  # set true only in a hardened/isolated CI container
   # stop_on_no_progress: false  # keep retrying even if the same error persists
+  # Advanced: if your codex CLI/wrapper takes different flags, override the args.
+  # Tokens may use {repo} and {prompt}. This replaces the default exec/sandbox args.
+  # Check `codex exec --help` (or `codex --help`) to see what your CLI accepts.
+  # args: ["exec", "--cd", "{repo}", "{prompt}"]
   # Env var(s) checked for an API key (first non-empty wins). For LiteLLM or a
   # custom Codex wrapper, set your key var name here instead of OPENAI_API_KEY.
   # api_key_envs: [MY_LITELLM_KEY, OPENAI_API_KEY]

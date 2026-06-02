@@ -75,6 +75,14 @@ def test_codex_command_default_sandbox():
     assert cmd[-1] == "PROMPT"
 
 
+def test_codex_command_custom_args_template():
+    cfg = Config()
+    cfg.codex.args = ["exec", "--cd", "{repo}", "{prompt}"]
+    cmd = build_codex_command(cfg, "FIXIT")
+    assert cmd == ["codex", "exec", "--cd", str(cfg.repo), "FIXIT"]
+    assert "--sandbox" not in cmd and "--ask-for-approval" not in cmd
+
+
 def test_codex_command_bypass_mode():
     cfg = Config()
     cfg.codex.bypass_sandbox = True

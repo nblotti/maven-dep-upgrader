@@ -98,6 +98,12 @@ class CodexConfig:
     require_api_key: bool = False
     # Extra env vars merged into the Codex subprocess (values support $VAR expansion).
     extra_env: dict[str, str] = field(default_factory=dict)
+    # Advanced: fully override the args passed to ``executable``. Each token may
+    # contain the placeholders ``{prompt}`` and ``{repo}``. When set, this REPLACES
+    # the default ``exec --cd <repo> --sandbox ... <prompt>`` construction, so use
+    # it when your codex CLI/wrapper takes different flags. Example:
+    #   args: ["exec", "--cd", "{repo}", "{prompt}"]
+    args: list[str] = field(default_factory=list)
 
 
 _BASELINE_CHOICES = ("ask", "abort", "fix-codex", "skip-failing", "off")

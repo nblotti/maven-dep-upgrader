@@ -122,6 +122,13 @@ def build_prompt(
 
 
 def build_codex_command(cfg: Config, prompt: str) -> list[str]:
+    # Custom CLI / wrapper: caller fully specifies the args via a template.
+    if cfg.codex.args:
+        repo = str(cfg.repo)
+        return [cfg.codex.executable] + [
+            tok.replace("{repo}", repo).replace("{prompt}", prompt)
+            for tok in cfg.codex.args
+        ]
     cmd = [cfg.codex.executable, "exec", "--cd", str(cfg.repo)]
     if cfg.codex.bypass_sandbox:
         cmd += ["--dangerously-bypass-approvals-and-sandbox"]
