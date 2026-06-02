@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import proc
+from .git_status import is_clean_excluding_tool_artifacts
 
 log = logging.getLogger("mvn_upgrader.git_ops")
 
@@ -34,7 +35,7 @@ class Git:
 
     def is_clean(self) -> bool:
         res = self._git("status", "--porcelain")
-        return res.ok and not res.stdout.strip()
+        return res.ok and is_clean_excluding_tool_artifacts(res.stdout)
 
     def current_branch(self) -> Optional[str]:
         res = self._git("rev-parse", "--abbrev-ref", "HEAD")

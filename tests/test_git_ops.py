@@ -70,3 +70,12 @@ def test_resolve_base_ref_missing_gives_hint(tmp_path):
 def test_commit_nothing_returns_none(tmp_path):
     g = _init_repo(tmp_path)
     assert g.commit_all("build(deps): noop") is None
+
+
+def test_is_clean_ignores_tool_workdir(tmp_path):
+    g = _init_repo(tmp_path)
+    assert g.is_clean()
+    wd = tmp_path / ".mvn-upgrade-work"
+    wd.mkdir()
+    (wd / "run.log").write_text("log\n")
+    assert g.is_clean()

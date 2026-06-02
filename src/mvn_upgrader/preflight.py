@@ -12,6 +12,7 @@ from typing import Optional
 
 from . import proc
 from .config import Config
+from .git_status import user_dirty_lines
 
 
 @dataclass
@@ -52,9 +53,11 @@ def _git_tree_clean(repo: Path) -> tuple[bool, str]:
     res = proc.run(["git", "status", "--porcelain"], cwd=repo)
     if not res.ok:
         return False, "git status failed (is this a git repo?)"
-    dirty = res.stdout.strip()
-    if dirty:
-        return False, f"working tree not clean ({len(dirty.splitlines())} changes)"
+    user_dirty = user_dirty_lines(res.stdout)
+    if user_dirty:
+        return False, f"working tree not clean ({len(user_dirty)} changes)"
+    if res.stdout.strip():
+        return True, "clean (tool workdir only)"
     return True, "clean"
 
 
