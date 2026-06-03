@@ -69,6 +69,15 @@ def test_not_found_returns_empty():
     assert client.list_versions("g", "missing") == []
 
 
+def test_parent_uses_pom_extension():
+    pages = {"r": [{"items": [{"version": "3.2.0"}]}]}
+    sess = FakeSession(pages)
+    client = NexusClient("https://n", ["r"], extension="jar", session=sess)
+    client.list_versions("org.springframework.boot", "spring-boot-starter-parent",
+                         extension="pom")
+    assert sess.requests[0]["maven.extension"] == "pom"
+
+
 def test_base_version_fallback_field():
     pages = {"r": [{"items": [{"maven.baseVersion": "9.9.9"}]}]}
     client = NexusClient("https://n", ["r"], session=FakeSession(pages))

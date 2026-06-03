@@ -64,6 +64,23 @@ def _select(cfg: Config, current: str, versions: list[str], ga: str) -> Optional
     )
 
 
+def sort_plan(plan: list[PlanItem], *, parent_last: bool = True) -> None:
+    """Order plan items for execution (in-place).
+
+    Default: dependencies and plugins first (by kind, then GA), then ``<parent>``
+    coordinates last — so e.g. ``spring-boot-starter-parent`` runs after individual
+    bumps that may already be managed by the parent BOM.
+    """
+    if parent_last:
+        plan.sort(key=lambda i: (
+            1 if i.artifact.version_source == VersionSource.PARENT else 0,
+            i.artifact.kind.value,
+            i.ga,
+        ))
+    else:
+        plan.sort(key=lambda i: (i.artifact.kind.value, i.ga))
+
+
 def build_plan(
     cfg: Config,
     artifacts: list[Artifact],
@@ -121,17 +138,28 @@ def build_plan(
     _plan_singles(cfg, nexus, singles, plan, results)
     _plan_property_groups(cfg, nexus, prop_groups, plan, results)
 
-    plan.sort(key=lambda i: (i.artifact.kind.value, i.artifact.ga))
+    sort_plan(plan, parent_last=cfg.policy.parent_last)
     return plan, results
 
 
-def _versions(nexus: NexusClient, a: Artifact) -> list[str]:
-    return [c.version for c in nexus.list_versions(a.group_id, a.artifact_id)]
+def _nexus_extension(cfg: Config, a: Artifact) -> str:
+    """Parent POMs are published with packaging ``pom``, not ``jar``."""
+    if a.version_source == VersionSource.PARENT:
+        return "pom"
+    return cfg.nexus.extension
+
+
+def _versions(nexus: NexusClient, cfg: Config, a: Artifact) -> list[str]:
+    ext = _nexus_extension(cfg, a)
+    return [
+        c.version
+        for c in nexus.list_versions(a.group_id, a.artifact_id, extension=ext)
+    ]
 
 
 def _plan_singles(cfg, nexus, singles, plan, results):
     for a in singles:
-        versions = _versions(nexus, a)
+        versions = _versions(nexus, cfg, a)
         if not versions:
             results.append(
                 _result(a, Status.NOT_IN_NEXUS,
@@ -168,7 +196,7 @@ def _plan_property_groups(cfg, nexus, prop_groups, plan, results):
         member_versions: dict[str, set[str]] = {}
         missing = False
         for m in members:
-            vs = _versions(nexus, m)
+            vs = _versions(nexus, cfg, m)
             if not vs:
                 results.append(
                     _result(m, Status.NOT_IN_NEXUS, notes=[

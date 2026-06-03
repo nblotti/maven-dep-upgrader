@@ -20,7 +20,7 @@ class FakeNexus:
     def __init__(self, mapping):
         self.mapping = mapping
 
-    def list_versions(self, group_id, artifact_id):
+    def list_versions(self, group_id, artifact_id, **kwargs):
         ga = f"{group_id}:{artifact_id}"
         return [Candidate(v, "repo") for v in self.mapping.get(ga, [])]
 
@@ -51,9 +51,28 @@ def test_plan_single_module():
     assert targets["org.apache.maven.plugins:maven-surefire-plugin"] == "3.2.5"
     assert targets["org.springframework.boot:spring-boot-starter-parent"] == "3.2.0"
 
+    # Parent POM upgrade runs after deps and plugins.
+    assert plan[-1].ga == "org.springframework.boot:spring-boot-starter-parent"
+    assert plan[-1].artifact.version_source == VersionSource.PARENT
+
     by_ga = {(r.ga, r.status) for r in results}
     assert ("org.springframework.boot:spring-boot-starter-web",
             Status.MANAGED_EXTERNAL) in by_ga
+
+
+def test_plan_parent_can_run_mixed_order():
+    cfg = Config(repo_path=str(FIX / "single"))
+    cfg.policy.parent_last = False
+    arts = _artifacts(FIX / "single")
+    nexus = FakeNexus({
+        "com.google.guava:guava": ["32.0.0-jre", "32.1.0-jre"],
+        "joda-time:joda-time": ["2.12.5", "2.12.7"],
+        "org.apache.commons:commons-lang3": ["3.12.0", "3.14.0"],
+        "org.apache.maven.plugins:maven-surefire-plugin": ["3.0.0", "3.2.5"],
+        "org.springframework.boot:spring-boot-starter-parent": ["3.1.0", "3.2.0"],
+    })
+    plan, _ = build_plan(cfg, arts, nexus)
+    assert plan[-1].ga != "org.springframework.boot:spring-boot-starter-parent"
 
 
 def test_plan_not_in_nexus_and_no_newer():

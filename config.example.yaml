@@ -25,6 +25,7 @@ policy:
   ignore_versions: []  # list of regexes; matching versions are dropped
   pin: {}              # "g:a": "1.2.3" forces a specific target
   one_at_a_time: false # if true, refuse property bumps that move >1 dependency
+  parent_last: true    # upgrade <parent> coords (e.g. spring-boot-starter-parent) last
 
 git:
   base_branch: main   # must exist locally or as origin/<name> (e.g. develop)

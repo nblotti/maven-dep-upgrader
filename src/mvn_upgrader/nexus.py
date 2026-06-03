@@ -78,7 +78,9 @@ class NexusClient:
             self._session = requests.Session()
         return self._session
 
-    def _search_repo(self, repository: str, group_id: str, artifact_id: str) -> list[str]:
+    def _search_repo(
+        self, repository: str, group_id: str, artifact_id: str, *, extension: str
+    ) -> list[str]:
         """Return all versions of a GA in one repository, following pagination."""
         url = self.base_url + _SEARCH_PATH
         versions: list[str] = []
@@ -91,7 +93,7 @@ class NexusClient:
                 "repository": repository,
                 "maven.groupId": group_id,
                 "maven.artifactId": artifact_id,
-                "maven.extension": self.extension,
+                "maven.extension": extension,
             }
             if token:
                 params["continuationToken"] = token
@@ -110,16 +112,23 @@ class NexusClient:
                 break
         return versions
 
-    def list_versions(self, group_id: str, artifact_id: str) -> list[Candidate]:
+    def list_versions(
+        self,
+        group_id: str,
+        artifact_id: str,
+        *,
+        extension: Optional[str] = None,
+    ) -> list[Candidate]:
         """List candidate versions for a GA, searching repositories in order.
 
         The first repository that returns any versions wins (matches the
         configured search-order semantics). Returns an empty list if the GA is
         not present in any configured repository.
         """
+        ext = extension if extension is not None else self.extension
         for repo in self.repositories:
             try:
-                versions = self._search_repo(repo, group_id, artifact_id)
+                versions = self._search_repo(repo, group_id, artifact_id, extension=ext)
             except Exception as exc:  # network / HTTP errors
                 log.warning(
                     "nexus search failed for %s:%s in %s: %s",

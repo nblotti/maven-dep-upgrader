@@ -136,6 +136,10 @@ tail -f /path/to/your/maven-project/.mvn-upgrade-work/run.log
   `versions-maven-plugin` goals (`use-dep-version`, `set-property`,
   `update-parent`) and falling back to a precise targeted XML edit (used for
   plugins, which have no exact-version goal, and whenever a goal can't apply).
+- **Parent POMs last (`policy.parent_last`, default `true`)** — coordinates
+  like `spring-boot-starter-parent` are planned and executed **after** all
+  individual dependencies and plugins. Nexus lookup uses `extension=pom` for
+  parent coordinates. Set `parent_last: false` to interleave with other upgrades.
 
 ## Baseline check (before upgrading)
 

@@ -17,7 +17,7 @@ class FakeNexus:
     def __init__(self, mapping):
         self.mapping = mapping
 
-    def list_versions(self, g, a):
+    def list_versions(self, g, a, **kwargs):
         return [Candidate(v, "maven-public") for v in self.mapping.get(f"{g}:{a}", [])]
 
 

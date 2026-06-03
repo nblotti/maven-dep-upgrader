@@ -60,6 +60,9 @@ class PolicyConfig:
     pin: dict[str, str] = field(default_factory=dict)
     # If true, refuse property bumps that would move >1 dependency.
     one_at_a_time: bool = False
+    # When true (default), <parent> coordinates (e.g. spring-boot-starter-parent)
+    # are upgraded after all dependencies and plugins.
+    parent_last: bool = True
 
 
 @dataclass

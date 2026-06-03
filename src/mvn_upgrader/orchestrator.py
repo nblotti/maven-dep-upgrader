@@ -65,14 +65,27 @@ def cmd_report(cfg: Config) -> int:
 
 
 def _print_plan_summary(plan, results) -> None:
+    from .models import VersionSource
+
+    deps_plugins = [i for i in plan if i.artifact.version_source != VersionSource.PARENT]
+    parents = [i for i in plan if i.artifact.version_source == VersionSource.PARENT]
+
     print(f"\nPlan: {len(plan)} upgrade(s).")
-    for item in plan:
+    for item in deps_plugins:
         a = item.artifact
         extra = f"  (+{len(item.co_moved)} co-moved)" if item.co_moved else ""
         print(
             f"  {a.kind.value:10} {a.ga}  {a.current_version} -> "
             f"{item.target_version}  [{a.version_source.value}]{extra}"
         )
+    if parents:
+        print(f"\n  --- parent POM(s) last ({len(parents)}) ---")
+        for item in parents:
+            a = item.artifact
+            print(
+                f"  {a.kind.value:10} {a.ga}  {a.current_version} -> "
+                f"{item.target_version}  [parent]"
+            )
     info = [r for r in results if r.status.value == "informational"]
     if info:
         print(f"\nInformational (no editable version): {len(info)}")
