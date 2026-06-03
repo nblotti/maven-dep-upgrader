@@ -55,7 +55,10 @@ def _git_tree_clean(repo: Path) -> tuple[bool, str]:
         return False, "git status failed (is this a git repo?)"
     user_dirty = user_dirty_lines(res.stdout)
     if user_dirty:
-        return False, f"working tree not clean ({len(user_dirty)} changes)"
+        paths = [porcelain_path(l) for l in user_dirty if porcelain_path(l)]
+        preview = ", ".join(paths[:5])
+        more = f" (+{len(paths) - 5} more)" if len(paths) > 5 else ""
+        return False, f"working tree not clean ({len(user_dirty)} changes: {preview}{more})"
     if res.stdout.strip():
         return True, "clean (tool workdir only)"
     return True, "clean"

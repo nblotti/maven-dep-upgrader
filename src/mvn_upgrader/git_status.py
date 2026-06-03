@@ -4,6 +4,14 @@ from __future__ import annotations
 
 from .build import WORKDIR_NAME
 
+# Files written by ``plan`` / ``run`` that are not user source changes.
+_TOOL_BASENAMES = frozenset({
+    "dependency-updates.md",
+    "dependency-updates.json",
+    "upgrade-plan.csv",
+    "AGENTS.md",
+})
+
 
 def porcelain_path(line: str) -> str:
     """Extract the file path from a ``git status --porcelain`` line."""
@@ -19,7 +27,8 @@ def is_ignored_tool_path(path: str) -> bool:
         return False
     if norm == WORKDIR_NAME or norm.startswith(WORKDIR_NAME + "/"):
         return True
-    return False
+    basename = norm.rsplit("/", 1)[-1]
+    return basename in _TOOL_BASENAMES
 
 
 def user_dirty_lines(porcelain_output: str) -> list[str]:
