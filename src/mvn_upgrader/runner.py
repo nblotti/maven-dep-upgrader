@@ -24,6 +24,13 @@ from .planner import build_plan
 from .pom import discover
 from .preflight import run_preflight
 from .report import RunState, load_state, now_iso, today, write_reports
+from .upgrade_plan import (
+    PlanFileError,
+    export_plan_csv,
+    load_plan_csv,
+    plan_csv_path,
+    resolve_plan_from_file,
+)
 
 log = logging.getLogger("mvn_upgrader.runner")
 
@@ -41,6 +48,15 @@ def _default_prompt(message: str) -> Optional[str]:
 def _commit_message(item: PlanItem) -> str:
     a = item.artifact
     return f"build(deps): bump {a.ga} from {a.current_version} to {item.target_version}"
+
+
+def _batch_commit_message(items: list[PlanItem]) -> str:
+    if len(items) == 1:
+        return _commit_message(items[0])
+    parts = [
+        f"{i.ga} {i.artifact.current_version}->{i.target_version}" for i in items
+    ]
+    return "build(deps): bump " + ", ".join(parts)
 
 
 def _result_from_item(item: PlanItem, status: Status, **kw) -> UpgradeResult:
@@ -157,14 +173,33 @@ def _fix_loop(
     *,
     build_fn: Callable,
     codex_fn: Callable,
-) -> tuple[bool, int, Optional[str]]:
+) -> tuple[bool, int, Optional[str], Optional[build_mod.BuildResult]]:
     """Bounded build/codex loop for a single dependency upgrade."""
 
     def invoke(c, tail):
-        codex_fn(c, item, tail, build_cmd=c.maven.build_command)
+        codex_fn(c, item, tail, build_cmd=build_mod.effective_build_command(c))
 
     return _generic_fix_loop(
         cfg, build_fn=build_fn, codex_invoke=invoke, tag_prefix=item.ga
+    )
+
+
+def _fix_loop_batch(
+    cfg: Config,
+    items: list[PlanItem],
+    *,
+    build_fn: Callable,
+    codex_batch_fn: Callable,
+) -> tuple[bool, int, Optional[str], Optional[build_mod.BuildResult]]:
+    tag = items[0].ga.replace(":", "_") if items else "batch"
+    if len(items) > 1:
+        tag = f"batch-{tag}+{len(items)}"
+
+    def invoke(c, tail):
+        codex_batch_fn(c, items, tail, build_cmd=build_mod.effective_build_command(c))
+
+    return _generic_fix_loop(
+        cfg, build_fn=build_fn, codex_invoke=invoke, tag_prefix=tag
     )
 
 
@@ -175,7 +210,7 @@ def _preexisting_fix_loop(
     codex_baseline_fn: Callable,
 ) -> tuple[bool, int, Optional[str]]:
     def invoke(c, tail):
-        r = codex_baseline_fn(c, tail, build_cmd=c.maven.build_command)
+        r = codex_baseline_fn(c, tail, build_cmd=build_mod.effective_build_command(c))
         if r is None:
             return
         print(f"  Codex exited with code {r.exit_code}")
@@ -316,11 +351,13 @@ def run_upgrades(
     create_mr: bool = False,
     only: Optional[list[str]] = None,
     max_items: Optional[int] = None,
+    plan_file: Optional[str] = None,
     plan_override: Optional[tuple[list[PlanItem], list[UpgradeResult]]] = None,
     nexus: Optional[NexusClient] = None,
     git_factory: Callable[..., Git] = Git,
     build_fn: Callable = build_mod.run,
     codex_fn: Callable = codex_mod.run_fix,
+    codex_batch_fn: Callable = codex_mod.run_fix_batch,
     codex_baseline_fn: Callable = codex_mod.run_baseline_fix,
     apply_fn: Callable = apply_mod.apply_item,
     baseline_fn: Callable = baseline_mod.run_baseline,
@@ -351,6 +388,23 @@ def run_upgrades(
     carry = [r for r in base_results if r.status != Status.PENDING]
     plan = _filter_plan(plan, only, max_items)
 
+    plan_batches: Optional[list[list[PlanItem]]] = None
+    if plan_file is not None:
+        csv_path = plan_csv_path(cfg, plan_file)
+        try:
+            rows = load_plan_csv(csv_path)
+            plan_batches = resolve_plan_from_file(plan, rows)
+        except PlanFileError as exc:
+            print(f"plan file error: {exc}")
+            return 1
+        flat = [i for batch in plan_batches for i in batch]
+        skipped = sum(1 for r in rows if r.order == 0)
+        print(f"loaded plan file: {csv_path}")
+        print(f"  {len(flat)} upgrade(s) in {len(plan_batches)} round(s)"
+              + (f", {skipped} skipped (order=0)" if skipped else ""))
+        # Resume filtering on flattened plan from file.
+        plan = flat
+
     # ---- idempotency / resume --------------------------------------------
     branch = f"{cfg.git.branch_prefix}/{today()}"
     prior = load_state(cfg)
@@ -363,6 +417,14 @@ def run_upgrades(
         already_upgraded[i.ga] for i in plan if i.ga in already_upgraded
     ]
     plan = [i for i in plan if i.ga not in already_upgraded]
+    if plan_batches is not None:
+        upgraded = set(already_upgraded)
+        plan_batches = [
+            [i for i in batch if i.ga not in upgraded]
+            for batch in plan_batches
+        ]
+        plan_batches = [b for b in plan_batches if b]
+        plan = [i for batch in plan_batches for i in batch]
     if resumed_results:
         print(f"resuming: {len(resumed_results)} artifact(s) already upgraded; "
               "skipping them.")
@@ -411,20 +473,39 @@ def run_upgrades(
     successes = len(resumed_results)
     aborted = False
     try:
-        for item in plan:
-            res = _process_item(cfg, git, item, build_fn=build_fn, codex_fn=codex_fn,
-                                 apply_fn=apply_fn)
-            results.append(res)
-            # Persist after every item so a crashed run can resume.
-            _write(cfg, results, mode="run", branch=branch,
-                   base_branch=cfg.git.base_branch, used_fallback=used_fallback)
-            if res.status == Status.UPGRADED:
-                successes += 1
-            elif res.status in (Status.SKIPPED_BUILD_FAILED, Status.ERROR):
-                if cfg.run.on_failure == "abort":
-                    print(f"aborting after failure on {item.ga} (on_failure=abort)")
-                    aborted = True
-                    break
+        rounds: list[list[PlanItem]]
+        if plan_batches is not None:
+            rounds = plan_batches
+        else:
+            rounds = [[item] for item in plan]
+
+        for round_no, batch in enumerate(rounds, start=1):
+            if len(batch) > 1:
+                print(f"\n=== round {round_no}: {len(batch)} artifact(s) ===")
+            if len(batch) == 1:
+                batch_results = [_process_item(
+                    cfg, git, batch[0], build_fn=build_fn, codex_fn=codex_fn,
+                    apply_fn=apply_fn,
+                )]
+            else:
+                batch_results = _process_batch(
+                    cfg, git, batch, build_fn=build_fn,
+                    codex_batch_fn=codex_batch_fn, apply_fn=apply_fn,
+                )
+            for res in batch_results:
+                results.append(res)
+                _write(cfg, results, mode="run", branch=branch,
+                       base_branch=cfg.git.base_branch, used_fallback=used_fallback)
+                if res.status == Status.UPGRADED:
+                    successes += 1
+                elif res.status in (Status.SKIPPED_BUILD_FAILED, Status.ERROR):
+                    if cfg.run.on_failure == "abort":
+                        label = batch[0].ga if len(batch) == 1 else f"round {round_no}"
+                        print(f"aborting after failure on {label} (on_failure=abort)")
+                        aborted = True
+                        break
+            if aborted:
+                break
     finally:
         if created_agents:
             (repo / "AGENTS.md").unlink(missing_ok=True)
@@ -481,6 +562,60 @@ def _process_item(cfg, git: Git, item: PlanItem, *, build_fn, codex_fn, apply_fn
         notes.append(f"error signature {sig}")
     return _result_from_item(item, Status.SKIPPED_BUILD_FAILED,
                              fix_attempts=fix_attempts, notes=notes)
+
+
+def _process_batch(
+    cfg, git: Git, items: list[PlanItem], *, build_fn, codex_batch_fn, apply_fn,
+) -> list[UpgradeResult]:
+    checkpoint = git.checkpoint()
+    labels = ", ".join(i.ga for i in items)
+    print(f"\n-> batch ({len(items)}): {labels}")
+
+    for item in items:
+        ar = apply_fn(cfg, item)
+        if not ar.ok:
+            git.restore_to(checkpoint)
+            return [
+                _result_from_item(item, Status.ERROR,
+                                  notes=[f"apply failed: {ar.detail}"])
+            ]
+
+    changed = git.changed_files()
+    nonpom = [f for f in changed if not f.endswith(".xml") and Path(f).name != "pom.xml"]
+    if nonpom:
+        git.restore_to(checkpoint)
+        return [
+            _result_from_item(items[0], Status.ERROR,
+                              notes=[f"apply touched non-POM files: {nonpom}"])
+        ]
+
+    green, fix_attempts, sig, _ = _fix_loop_batch(
+        cfg, items, build_fn=build_fn, codex_batch_fn=codex_batch_fn,
+    )
+    if green:
+        sha = git.commit_all(_batch_commit_message(items))
+        out: list[UpgradeResult] = []
+        for item in items:
+            notes = []
+            if item.co_moved:
+                notes.append("also moved: " + ", ".join(item.co_moved))
+            if len(items) > 1:
+                notes.append(f"batch round with {len(items)} artifact(s)")
+            out.append(_result_from_item(
+                item, Status.UPGRADED, commit=sha,
+                fix_attempts=fix_attempts, notes=notes,
+            ))
+        return out
+
+    git.restore_to(checkpoint)
+    notes = [f"build red after {fix_attempts} fix attempt(s)"]
+    if sig:
+        notes.append(f"error signature {sig}")
+    return [
+        _result_from_item(item, Status.SKIPPED_BUILD_FAILED,
+                          fix_attempts=fix_attempts, notes=notes)
+        for item in items
+    ]
 
 
 def _commit_report(cfg, git: Git) -> None:

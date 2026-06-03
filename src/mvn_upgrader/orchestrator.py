@@ -16,16 +16,15 @@ from .preflight import run_preflight
 log = logging.getLogger("mvn_upgrader.orchestrator")
 
 
-def cmd_plan(cfg: Config) -> int:
+def cmd_plan(cfg: Config, *, export_path: Optional[str] = None) -> int:
     pf = run_preflight(cfg, need_mutation=False)
     print(pf.render())
     if not pf.ok:
         print("\npreflight failed; cannot build plan.")
         return 1
-    # Wired fully in M3 (discovery + nexus + policy + report).
     from .planner import build_and_report_plan
 
-    plan, results = build_and_report_plan(cfg)
+    plan, results = build_and_report_plan(cfg, export_path=export_path)
     _print_plan_summary(plan, results)
     return 0
 
@@ -37,6 +36,7 @@ def cmd_run(
     create_mr: bool = False,
     only: Optional[list[str]] = None,
     max_items: Optional[int] = None,
+    plan_file: Optional[str] = None,
 ) -> int:
     if not apply:
         print("(no --apply: running in plan-only mode)\n")
@@ -49,6 +49,7 @@ def cmd_run(
         create_mr=create_mr,
         only=only or [],
         max_items=max_items,
+        plan_file=plan_file,
     )
 
 

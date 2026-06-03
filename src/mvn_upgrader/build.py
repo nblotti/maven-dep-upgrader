@@ -83,6 +83,11 @@ def build_command(cfg: Config) -> list[str]:
     return parts
 
 
+def effective_build_command(cfg: Config) -> str:
+    """Shell command string the tool (and Codex) should use — includes settings.xml."""
+    return shlex.join(build_command(cfg))
+
+
 def _test_exclude_args(cfg: Config, parts: list[str]) -> list[str]:
     """Build ``-Dtest=!...`` args to skip pre-existing failing tests.
 

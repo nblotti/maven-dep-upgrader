@@ -58,38 +58,39 @@ def test_run_fix_includes_preexisting_from_cfg(monkeypatch):
     captured = {}
 
     def fake_runner(args, **kw):
-        captured["prompt"] = args[-1]
+        captured["stdin"] = kw.get("stdin")
         return ProcResult(args=list(args), returncode=0, stdout="", stderr="")
 
     run_fix(cfg, _item(), "log", build_cmd="mvn verify", runner=fake_runner)
-    assert "FooTest#bar" in captured["prompt"]
-    assert "ALREADY failing" in captured["prompt"]
+    assert "FooTest#bar" in captured["stdin"]
+    assert "ALREADY failing" in captured["stdin"]
 
 
-def test_codex_command_default_sandbox():
+def test_codex_command_default_uses_stdin_not_argv():
     cfg = Config()
-    cmd = build_codex_command(cfg, "PROMPT")
+    cmd, stdin = build_codex_command(cfg, "PROMPT")
     assert cmd[:4] == ["codex", "exec", "--cd", str(cfg.repo)]
     assert "--sandbox" in cmd and "workspace-write" in cmd
-    # `codex exec` does not accept --ask-for-approval; it must not be sent.
     assert "--ask-for-approval" not in cmd
-    assert cmd[-1] == "PROMPT"
+    assert "PROMPT" not in cmd
+    assert stdin == "PROMPT"
 
 
 def test_codex_command_custom_args_template():
     cfg = Config()
     cfg.codex.args = ["exec", "--cd", "{repo}", "{prompt}"]
-    cmd = build_codex_command(cfg, "FIXIT")
-    assert cmd == ["codex", "exec", "--cd", str(cfg.repo), "FIXIT"]
-    assert "--sandbox" not in cmd and "--ask-for-approval" not in cmd
+    cmd, stdin = build_codex_command(cfg, "FIXIT")
+    assert cmd == ["codex", "exec", "--cd", str(cfg.repo)]
+    assert stdin == "FIXIT"
 
 
 def test_codex_command_bypass_mode():
     cfg = Config()
     cfg.codex.bypass_sandbox = True
-    cmd = build_codex_command(cfg, "P")
+    cmd, stdin = build_codex_command(cfg, "P")
     assert "--dangerously-bypass-approvals-and-sandbox" in cmd
     assert "--sandbox" not in cmd
+    assert stdin == "P"
 
 
 def test_run_fix_passes_env_and_redacts(monkeypatch):

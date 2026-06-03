@@ -42,6 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_plan = sub.add_parser("plan", help="discover + report only (no mutations)")
     add_common(p_plan)
+    p_plan.add_argument(
+        "--export",
+        nargs="?",
+        const="upgrade-plan.csv",
+        metavar="PATH",
+        help="write editable upgrade-plan.csv (default: upgrade-plan.csv in report_dir)",
+    )
 
     p_run = sub.add_parser("run", help="perform upgrades (requires --apply to mutate)")
     add_common(p_run)
@@ -74,6 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="pre-upgrade baseline handling: ask (prompt), fix-codex (Codex fixes "
              "red build before upgrades), skip-failing (exclude failing tests), "
              "abort (stop if red), off",
+    )
+    p_run.add_argument(
+        "--plan-file",
+        nargs="?",
+        const="upgrade-plan.csv",
+        metavar="PATH",
+        help="run upgrades from editable CSV (from plan); order=0 skips, same order=batch",
     )
 
     p_report = sub.add_parser("report", help="regenerate report from last run state")
@@ -110,7 +124,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
         try:
             if args.command == "plan":
-                return orchestrator.cmd_plan(cfg)
+                export = getattr(args, "export", None)
+                return orchestrator.cmd_plan(cfg, export_path=export)
             if args.command == "report":
                 return orchestrator.cmd_report(cfg)
             if args.command == "run":
@@ -127,6 +142,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     create_mr=args.create_mr,
                     only=_split_csv(args.only),
                     max_items=args.max,
+                    plan_file=getattr(args, "plan_file", None),
                 )
         finally:
             if use_runlog:

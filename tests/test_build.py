@@ -4,6 +4,7 @@ import pytest
 
 from mvn_upgrader.build import (
     build_command,
+    effective_build_command,
     error_signature,
     normalize_error_lines,
     run,
@@ -56,6 +57,13 @@ def test_build_command_inserts_settings():
     cmd = build_command(cfg)
     assert cmd[0] == "mvn"
     assert cmd[1] == "-s" and cmd[2] == "/tmp/s.xml"
+
+
+def test_effective_build_command_includes_settings():
+    cfg = Config()
+    cfg.maven.settings = "/tmp/s.xml"
+    s = effective_build_command(cfg)
+    assert "-s /tmp/s.xml" in s or s.endswith("/tmp/s.xml")
 
 
 def test_build_command_default_when_empty():

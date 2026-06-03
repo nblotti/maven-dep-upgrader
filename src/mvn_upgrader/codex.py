@@ -19,6 +19,9 @@ from .redact import redact
 
 log = logging.getLogger("mvn_upgrader.codex")
 
+# Keep Codex prompts bounded (stdin avoids argv limits; this keeps token cost sane).
+_MAX_LOG_LINES = 150
+
 
 @dataclass
 class CodexResult:
@@ -35,6 +38,18 @@ PROMPT_TEMPLATE = (
     "Hard rules: do NOT change the version of `{ga}` or any other dependency; "
     "do NOT touch unrelated modules; do NOT edit tests to make them pass unless "
     "the test itself calls a changed API; keep changes minimal. "
+    "The build command is `{build_cmd}`.\n"
+    "Build error output:\n"
+    "```\n{log_tail}\n```\n"
+)
+
+BATCH_PROMPT_TEMPLATE = (
+    "The build is failing after upgrading these artifacts in the same round:\n"
+    "{bumps}\n"
+    "Fix only the compilation/test breakages caused by these dependency changes.\n"
+    "Hard rules: do NOT change any dependency or plugin versions; do NOT touch "
+    "unrelated modules; do NOT edit tests to make them pass unless the test "
+    "itself calls a changed API; keep changes minimal. "
     "The build command is `{build_cmd}`.\n"
     "Build error output:\n"
     "```\n{log_tail}\n```\n"
@@ -61,7 +76,9 @@ When asked to fix a failing build:
 
 
 def agents_md_content(cfg: Config) -> str:
-    return AGENTS_MD.format(build_cmd=cfg.maven.build_command)
+    from . import build as build_mod
+
+    return AGENTS_MD.format(build_cmd=build_mod.effective_build_command(cfg))
 
 
 _PREEXISTING_NOTE = (
@@ -97,8 +114,18 @@ BASELINE_PROMPT_TEMPLATE = (
 )
 
 
+def _trim_log(log_tail: str, max_lines: int = _MAX_LOG_LINES) -> str:
+    lines = log_tail.splitlines()
+    if len(lines) <= max_lines:
+        return log_tail
+    omitted = len(lines) - max_lines
+    return f"... ({omitted} lines omitted) ...\n" + "\n".join(lines[-max_lines:])
+
+
 def build_baseline_prompt(build_cmd: str, log_tail: str) -> str:
-    return BASELINE_PROMPT_TEMPLATE.format(build_cmd=build_cmd, log_tail=log_tail)
+    return BASELINE_PROMPT_TEMPLATE.format(
+        build_cmd=build_cmd, log_tail=_trim_log(log_tail),
+    )
 
 
 def build_prompt(
@@ -113,7 +140,7 @@ def build_prompt(
         old=a.current_version or "?",
         new=item.target_version,
         build_cmd=build_cmd,
-        log_tail=log_tail,
+        log_tail=_trim_log(log_tail),
     )
     if preexisting_failures:
         listing = "\n".join(f"- {s}" for s in preexisting_failures)
@@ -121,23 +148,63 @@ def build_prompt(
     return prompt
 
 
-def build_codex_command(cfg: Config, prompt: str) -> list[str]:
-    # Custom CLI / wrapper: caller fully specifies the args via a template.
+def build_batch_prompt(
+    items: list[PlanItem],
+    build_cmd: str,
+    log_tail: str,
+    preexisting_failures: Optional[list[str]] = None,
+) -> str:
+    bumps = "\n".join(
+        f"- {i.artifact.ga} ({i.artifact.kind.value}): "
+        f"{i.artifact.current_version or '?'} -> {i.target_version}"
+        for i in items
+    )
+    prompt = BATCH_PROMPT_TEMPLATE.format(
+        bumps=bumps, build_cmd=build_cmd, log_tail=_trim_log(log_tail),
+    )
+    if preexisting_failures:
+        listing = "\n".join(f"- {s}" for s in preexisting_failures)
+        prompt += _PREEXISTING_NOTE.format(listing=listing)
+    return prompt
+
+
+def build_codex_command(cfg: Config, prompt: str) -> tuple[list[str], Optional[str]]:
+    """Build argv for Codex. Prompt is passed via stdin (not argv) to avoid E2BIG."""
+    repo = str(cfg.repo)
     if cfg.codex.args:
-        repo = str(cfg.repo)
-        return [cfg.codex.executable] + [
-            tok.replace("{repo}", repo).replace("{prompt}", prompt)
-            for tok in cfg.codex.args
-        ]
-    cmd = [cfg.codex.executable, "exec", "--cd", str(cfg.repo)]
+        argv = [cfg.codex.executable]
+        embed_prompt = False
+        for tok in cfg.codex.args:
+            if tok == "{prompt}":
+                embed_prompt = True
+            else:
+                argv.append(tok.replace("{repo}", repo))
+        if embed_prompt:
+            return argv, prompt
+        # Legacy: {prompt} replaced inline — still prefer stdin if huge.
+        if len(prompt) > 8000:
+            return argv, prompt
+        return argv + [prompt], None
+    cmd = [cfg.codex.executable, "exec", "--cd", repo]
     if cfg.codex.bypass_sandbox:
         cmd += ["--dangerously-bypass-approvals-and-sandbox"]
     else:
-        # `codex exec` is non-interactive and never prompts for approval, so it
-        # rejects --ask-for-approval; only the sandbox policy is relevant here.
         cmd += ["--sandbox", cfg.codex.sandbox]
-    cmd += [prompt]
-    return cmd
+    return cmd, prompt
+
+
+def _invoke_codex(cfg: Config, prompt: str, *, runner=proc.run_streaming) -> CodexResult:
+    cmd, stdin = build_codex_command(cfg, prompt)
+    res = runner(
+        cmd, cwd=cfg.repo, env=codex_env(cfg), stdin=stdin,
+        redact=cfg.secret_values(), prefix="  [codex] ",
+    )
+    return CodexResult(
+        invoked=True,
+        exit_code=res.returncode,
+        stdout=redact(res.stdout, cfg.secret_values()),
+        stderr=redact(res.stderr, cfg.secret_values()),
+    )
 
 
 def codex_env(cfg: Config) -> dict[str, str]:
@@ -159,16 +226,22 @@ def run_fix(
     """Ask Codex to fix the breakage. Returns its exit code/output (not trusted)."""
     preexisting = getattr(cfg.maven, "test_excludes", None) or None
     prompt = build_prompt(item, build_cmd, log_tail, preexisting_failures=preexisting)
-    cmd = build_codex_command(cfg, prompt)
+    return _invoke_codex(cfg, prompt, runner=runner)
 
-    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg),
-                 redact=cfg.secret_values(), prefix="  [codex] ")
-    return CodexResult(
-        invoked=True,
-        exit_code=res.returncode,
-        stdout=redact(res.stdout, cfg.secret_values()),
-        stderr=redact(res.stderr, cfg.secret_values()),
-    )
+
+def run_fix_batch(
+    cfg: Config,
+    items: list[PlanItem],
+    log_tail: str,
+    *,
+    build_cmd: str,
+    runner=proc.run_streaming,
+) -> CodexResult:
+    """Ask Codex to fix breakages after a multi-artifact upgrade round."""
+    preexisting = getattr(cfg.maven, "test_excludes", None) or None
+    prompt = build_batch_prompt(items, build_cmd, log_tail,
+                                preexisting_failures=preexisting)
+    return _invoke_codex(cfg, prompt, runner=runner)
 
 
 def run_baseline_fix(
@@ -180,12 +253,4 @@ def run_baseline_fix(
 ) -> CodexResult:
     """Ask Codex to fix pre-existing build failures (before any upgrade)."""
     prompt = build_baseline_prompt(build_cmd, log_tail)
-    cmd = build_codex_command(cfg, prompt)
-    res = runner(cmd, cwd=cfg.repo, env=codex_env(cfg),
-                 redact=cfg.secret_values(), prefix="  [codex] ")
-    return CodexResult(
-        invoked=True,
-        exit_code=res.returncode,
-        stdout=redact(res.stdout, cfg.secret_values()),
-        stderr=redact(res.stderr, cfg.secret_values()),
-    )
+    return _invoke_codex(cfg, prompt, runner=runner)

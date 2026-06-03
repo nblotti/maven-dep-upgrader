@@ -206,7 +206,11 @@ def _plan_property_groups(cfg, nexus, prop_groups, plan, results):
         )
 
 
-def build_and_report_plan(cfg: Config) -> tuple[list[PlanItem], list[UpgradeResult]]:
+def build_and_report_plan(
+    cfg: Config,
+    *,
+    export_path: Optional[str] = None,
+) -> tuple[list[PlanItem], list[UpgradeResult]]:
     disc = discover(cfg)
     nexus = NexusClient.from_config(cfg) if cfg.nexus.configured else None
     if nexus is None:
@@ -223,4 +227,13 @@ def build_and_report_plan(cfg: Config) -> tuple[list[PlanItem], list[UpgradeResu
     md_path, json_path = write_reports(cfg, state)
     log.info("wrote %s and %s", md_path, json_path)
     print(f"\nReport written to:\n  {md_path}\n  {json_path}")
+
+    if plan:
+        from .upgrade_plan import export_plan_csv
+
+        csv_path = export_plan_csv(cfg, plan, path=export_path)
+        print(f"  {csv_path}")
+        print("  Edit the 'order' column (0=skip, same number=same round), then:")
+        print(f"  mvn-upgrade run --config ... --apply --plan-file {csv_path.name}")
+
     return plan, results

@@ -82,6 +82,7 @@ def run_streaming(
     *,
     cwd: Optional[str | Path] = None,
     env: Optional[dict[str, str]] = None,
+    stdin: Optional[str] = None,
     redact: Optional[Sequence[str]] = None,
     prefix: str = "",
 ) -> ProcResult:
@@ -90,6 +91,9 @@ def run_streaming(
     stderr is merged into stdout so progress shows in real time. Each line is
     redacted before printing; the captured (combined) output is returned in
     ``stdout`` so existing callers keep working.
+
+    When ``stdin`` is set it is written to the process stdin (used for large
+    Codex prompts that would exceed the OS argument-length limit).
     """
     arglist = [str(a) for a in args]
     log.debug("exec(stream): %s", _redacted(" ".join(arglist), redact))
@@ -97,11 +101,16 @@ def run_streaming(
         arglist,
         cwd=str(cwd) if cwd is not None else None,
         env=env,
+        stdin=subprocess.PIPE if stdin is not None else None,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
     )
+    if stdin is not None:
+        assert proc.stdin is not None
+        proc.stdin.write(stdin)
+        proc.stdin.close()
     captured: list[str] = []
     assert proc.stdout is not None
     for line in proc.stdout:

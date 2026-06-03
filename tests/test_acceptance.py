@@ -59,5 +59,6 @@ def test_plan_makes_zero_source_changes(tmp_path, monkeypatch):
     pom = (repo / "pom.xml").read_text()
     assert "<version>2.12.5</version>" in pom  # joda NOT bumped by plan
     dirty = set(g.changed_files())
-    assert dirty <= {"dependency-updates.md", "dependency-updates.json"}
+    assert dirty <= {"dependency-updates.md", "dependency-updates.json", "upgrade-plan.csv"}
     assert (repo / "dependency-updates.md").is_file()
+    assert (repo / "upgrade-plan.csv").is_file()

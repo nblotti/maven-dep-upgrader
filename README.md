@@ -58,11 +58,11 @@ Maven server credentials live in `settings.xml`. Point `maven.settings` at a
 ## Usage
 
 ```bash
-# Plan only (default, no mutations). Writes the report.
+# Plan only (default, no mutations). Writes the report + upgrade-plan.csv.
 mvn-upgrade plan --config config.yaml
 
-# Perform the upgrades (must pass --apply to mutate the repo).
-mvn-upgrade run --config config.yaml --apply
+# Run upgrades from an edited plan file (order column controls sequence).
+mvn-upgrade run --config config.yaml --apply --plan-file upgrade-plan.csv
 
 # Also push the branch and open a GitLab MR if anything was upgraded.
 mvn-upgrade run --config config.yaml --apply --create-mr
@@ -78,6 +78,37 @@ mvn-upgrade report --config config.yaml
 ```
 
 Without `--apply`, `run` behaves exactly like `plan` (safety).
+
+## Editable upgrade plan (`upgrade-plan.csv`)
+
+Every `plan` writes **`upgrade-plan.csv`** alongside the report. Edit it in Excel
+or a text editor before running:
+
+| Column | Meaning |
+|--------|---------|
+| `order` | Execution sequence. **0 = skip** this row. |
+| `target_version` | May be edited (Nexus policy is not re-checked). |
+| other columns | Informational; used to match rows to discovered artifacts |
+
+**Same `order` on multiple rows** → applied in **one round** (all POM edits, then
+one build + Codex cycle, one commit).
+
+Example:
+
+```csv
+order,kind,group_id,artifact_id,current_version,target_version,...
+1,dependency,com.google.guava,guava,32.0.0-jre,32.1.0-jre,...
+2,plugin,org.apache.maven.plugins,maven-surefire-plugin,2.22.2,3.0.0,...
+0,dependency,joda-time,joda-time,2.10,2.12.7,...    ← skipped
+3,dependency,foo,bar,1.0,2.0,...
+3,dependency,baz,qux,1.0,2.0,...                    ← same round as bar
+```
+
+```bash
+mvn-upgrade plan --config config.yaml
+# edit upgrade-plan.csv
+mvn-upgrade run --config config.yaml --apply --plan-file upgrade-plan.csv
+```
 
 ## Follow-along run log
 
